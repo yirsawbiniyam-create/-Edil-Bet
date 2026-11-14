@@ -1,0 +1,813 @@
+{
+  "entities": {
+    "TelebirrSettings": {
+      "title": "TelebirrSettings",
+      "description": "System-wide Telebirr deposit phone number and game limits configured by the admin.",
+      "type": "object",
+      "properties": {
+        "depositPhone": {
+          "type": "string",
+          "pattern": "^0[79][0-9]{8}$",
+          "minLength": 10,
+          "maxLength": 10,
+          "description": "Admin Telebirr phone number for receiving player deposits."
+        },
+        "withdrawalPhone": {
+          "type": "string",
+          "pattern": "^0[79][0-9]{8}$",
+          "minLength": 10,
+          "maxLength": 10,
+          "description": "Admin Telebirr phone number used for sending player withdrawals."
+        },
+        "accountName": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80,
+          "description": "Display name on the Telebirr account."
+        },
+        "minDeposit": {
+          "type": "number",
+          "description": "Minimum deposit amount in ETB (100)."
+        },
+        "minWithdraw": {
+          "type": "number",
+          "description": "Minimum withdrawal amount in ETB (500)."
+        },
+        "houseWinRate": {
+          "type": "number",
+          "description": "Configured reduced player win rate factor (e.g. 0.28 for 50/50 base)."
+        },
+        "updatedBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "Admin UID who last updated settings."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last update."
+        }
+      },
+      "required": [
+        "depositPhone",
+        "withdrawalPhone",
+        "accountName",
+        "minDeposit",
+        "minWithdraw",
+        "houseWinRate",
+        "updatedBy",
+        "updatedAt"
+      ]
+    },
+    "GameBranding": {
+      "title": "GameBranding",
+      "description": "Public game logo uploaded or configured by the admin.",
+      "type": "object",
+      "properties": {
+        "logoDataUrl": {
+          "type": "string",
+          "maxLength": 200000,
+          "description": "Data URL or HTTPS URL for the game logo displayed across the app."
+        },
+        "updatedBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["logoDataUrl", "updatedBy", "updatedAt"]
+    },
+    "GameConfig": {
+      "title": "GameConfig",
+      "description": "Admin-configurable game odds, win probability, and table betting limits.",
+      "type": "object",
+      "properties": {
+        "minBet": {
+          "type": "number",
+          "description": "Minimum wager per round in ETB (1 - 50000)."
+        },
+        "maxBet": {
+          "type": "number",
+          "description": "Maximum wager per round in ETB (minBet - 500000)."
+        },
+        "houseWinRate": {
+          "type": "number",
+          "description": "Base player win probability factor (0.05 - 0.50)."
+        },
+        "singleDiceRangeOdds": {
+          "type": "number",
+          "description": "Payout multiplier for single dice low/high (1.2 - 5.0)."
+        },
+        "singleDiceExactOdds": {
+          "type": "number",
+          "description": "Payout multiplier for single dice exact number (2.0 - 12.0)."
+        },
+        "doubleDiceRangeOdds": {
+          "type": "number",
+          "description": "Payout multiplier for double dice 2-6 or 8-12 (1.2 - 5.0)."
+        },
+        "doubleDiceLucky7Odds": {
+          "type": "number",
+          "description": "Payout multiplier for double dice lucky 7 (2.0 - 12.0)."
+        },
+        "coinOdds": {
+          "type": "number",
+          "description": "Payout multiplier for coin flip (1.2 - 4.0)."
+        },
+        "luckyOdds": {
+          "type": "number",
+          "description": "Payout multiplier for Lucky 1-20 (5.0 - 35.0)."
+        },
+        "footballOddsScale": {
+          "type": "number",
+          "description": "Scale factor applied to football betting odds (0.7 - 1.5)."
+        },
+        "footballMaxOdds": {
+          "type": "number",
+          "description": "Maximum combined accumulator multiplier for football tickets (5 - 500)."
+        },
+        "updatedBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "minBet",
+        "maxBet",
+        "houseWinRate",
+        "singleDiceRangeOdds",
+        "singleDiceExactOdds",
+        "doubleDiceRangeOdds",
+        "doubleDiceLucky7Odds",
+        "coinOdds",
+        "luckyOdds",
+        "footballOddsScale",
+        "footballMaxOdds",
+        "updatedBy",
+        "updatedAt"
+      ]
+    },
+    "UserWallet": {
+      "title": "UserWallet",
+      "description": "Player wallet balance and deposit status without PII.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "balance": {
+          "type": "number"
+        },
+        "hasDeposited": {
+          "type": "boolean"
+        },
+        "totalDeposited": {
+          "type": "number"
+        },
+        "totalWithdrawn": {
+          "type": "number"
+        },
+        "lastActionType": {
+          "type": "string",
+          "enum": ["init", "deposit", "bet", "withdraw", "refund", "bonus", "football_place", "football_settle"]
+        },
+        "lastActionRef": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "uid",
+        "displayName",
+        "balance",
+        "hasDeposited",
+        "totalDeposited",
+        "totalWithdrawn",
+        "lastActionType",
+        "lastActionRef",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "UserPrivateInfo": {
+      "title": "UserPrivateInfo",
+      "description": "Isolated PII for a player including email and registered deposit Telebirr phone number.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "email": {
+          "type": "string",
+          "maxLength": 150
+        },
+        "telebirrPhone": {
+          "type": "string",
+          "pattern": "^0[79][0-9]{8}$",
+          "minLength": 10,
+          "maxLength": 10
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "email", "telebirrPhone", "updatedAt"]
+    },
+    "UsedTxId": {
+      "title": "UsedTxId",
+      "description": "Immutable index preventing reuse of Telebirr transaction IDs.",
+      "type": "object",
+      "properties": {
+        "txId": {
+          "type": "string",
+          "pattern": "^[A-Z0-9]{6,24}$",
+          "minLength": 6,
+          "maxLength": 24
+        },
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "amount": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["txId", "uid", "amount", "createdAt"]
+    },
+    "Deposit": {
+      "title": "Deposit",
+      "description": "Verified Telebirr deposit record.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 6,
+          "maxLength": 24
+        },
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "playerName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "playerPhone": {
+          "type": "string",
+          "pattern": "^0[79][0-9]{8}$",
+          "minLength": 10,
+          "maxLength": 10
+        },
+        "systemPhone": {
+          "type": "string",
+          "pattern": "^0[79][0-9]{8}$",
+          "minLength": 10,
+          "maxLength": 10
+        },
+        "txId": {
+          "type": "string",
+          "pattern": "^[A-Z0-9]{6,24}$",
+          "minLength": 6,
+          "maxLength": 24
+        },
+        "amount": {
+          "type": "number"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["verified"]
+        },
+        "verifiedMessage": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 120
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "uid",
+        "playerName",
+        "playerPhone",
+        "systemPhone",
+        "txId",
+        "amount",
+        "status",
+        "verifiedMessage",
+        "createdAt"
+      ]
+    },
+    "Withdrawal": {
+      "title": "Withdrawal",
+      "description": "Player withdrawal request verified by the system and paid out by admin with Telebirr PIN.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "playerName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "playerPhone": {
+          "type": "string",
+          "pattern": "^0[79][0-9]{8}$",
+          "minLength": 10,
+          "maxLength": 10
+        },
+        "sourceSystemPhone": {
+          "type": "string",
+          "pattern": "^0[79][0-9]{8}$",
+          "minLength": 10,
+          "maxLength": 10
+        },
+        "amount": {
+          "type": "number"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "completed", "rejected"]
+        },
+        "systemVerified": {
+          "type": "boolean"
+        },
+        "systemVerifiedText": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 120
+        },
+        "adminPinConfirmed": {
+          "type": "boolean"
+        },
+        "processedBy": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "uid",
+        "playerName",
+        "playerPhone",
+        "sourceSystemPhone",
+        "amount",
+        "status",
+        "systemVerified",
+        "systemVerifiedText",
+        "adminPinConfirmed",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Bet": {
+      "title": "Bet",
+      "description": "Individual game round wager and outcome saved in Firestore.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "gameType": {
+          "type": "string",
+          "enum": ["dice_single", "dice_double", "dice_d100", "coin", "lucky", "football"]
+        },
+        "gameName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "betAmount": {
+          "type": "number"
+        },
+        "multiplier": {
+          "type": "number"
+        },
+        "choiceText": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "resultText": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 250
+        },
+        "won": {
+          "type": "boolean"
+        },
+        "payout": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "uid",
+        "gameType",
+        "gameName",
+        "betAmount",
+        "multiplier",
+        "choiceText",
+        "resultText",
+        "won",
+        "payout",
+        "createdAt"
+      ]
+    },
+    "LedgerEntry": {
+      "title": "LedgerEntry",
+      "description": "System income and expense accounting record.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "playerName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "playerPhone": {
+          "type": "string",
+          "pattern": "^0[79][0-9]{8}$",
+          "minLength": 10,
+          "maxLength": 10
+        },
+        "type": {
+          "type": "string",
+          "enum": ["income", "expense"]
+        },
+        "category": {
+          "type": "string",
+          "enum": ["deposit", "withdrawal"]
+        },
+        "amount": {
+          "type": "number"
+        },
+        "referenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 180
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "uid",
+        "playerName",
+        "playerPhone",
+        "type",
+        "category",
+        "amount",
+        "referenceId",
+        "description",
+        "createdAt"
+      ]
+    },
+    "AdminRecord": {
+      "title": "AdminRecord",
+      "description": "Admin allowlist entry.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "email": {
+          "type": "string",
+          "maxLength": 150
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "email", "createdAt"]
+    },
+    "DailyBonus": {
+      "title": "DailyBonus",
+      "description": "One-per-day free login bonus claim record in Firestore.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "dayKey": {
+          "type": "string",
+          "pattern": "^[0-9]{4}_[0-9]{1,2}_[0-9]{1,2}$",
+          "minLength": 8,
+          "maxLength": 10
+        },
+        "amount": {
+          "type": "number",
+          "description": "Daily free bonus credited in ETB (10)."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "uid", "dayKey", "amount", "createdAt"]
+    },
+    "RecentWinner": {
+      "title": "RecentWinner",
+      "description": "Anonymized live winner feed record created atomically on winning bets (zero PII).",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "playerMask": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 32,
+          "description": "Masked player handle (e.g. 0911****44 or Ab***) with no PII."
+        },
+        "gameType": {
+          "type": "string",
+          "enum": ["dice_single", "dice_double", "dice_d100", "coin", "lucky", "football"]
+        },
+        "gameName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "multiplier": {
+          "type": "number"
+        },
+        "payout": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "uid", "playerMask", "gameType", "gameName", "multiplier", "payout", "createdAt"]
+    },
+    "FootballTicket": {
+      "title": "FootballTicket",
+      "description": "Live football betting slip supporting real-time match tracking and dynamic Cashout under platform rules.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "betAmount": { "type": "number" },
+        "totalOdds": { "type": "number" },
+        "potentialPayout": { "type": "number" },
+        "picksCount": { "type": "number" },
+        "choiceText": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "picks": { "type": "array" },
+        "currentMinute": { "type": "number" },
+        "cashoutOffer": { "type": "number" },
+        "cashoutEligible": { "type": "boolean" },
+        "status": {
+          "type": "string",
+          "enum": ["live", "cashed_out", "won", "lost"]
+        },
+        "payout": { "type": "number" },
+        "resultText": { "type": "string", "maxLength": 250 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "uid",
+        "betAmount",
+        "totalOdds",
+        "potentialPayout",
+        "picksCount",
+        "choiceText",
+        "picks",
+        "currentMinute",
+        "cashoutOffer",
+        "cashoutEligible",
+        "status",
+        "payout",
+        "resultText",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "FootballPopularity": {
+      "title": "FootballPopularity",
+      "description": "Anonymized public match bet counters used to rank most-bet teams on the football betting page (zero PII).",
+      "type": "object",
+      "properties": {
+        "matchId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "home": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "away": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "homeCode": { "type": "string", "minLength": 2, "maxLength": 6 },
+        "awayCode": { "type": "string", "minLength": 2, "maxLength": 6 },
+        "leagueLabel": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "homeBets": { "type": "number" },
+        "drawBets": { "type": "number" },
+        "awayBets": { "type": "number" },
+        "totalBets": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "matchId",
+        "home",
+        "away",
+        "homeCode",
+        "awayCode",
+        "leagueLabel",
+        "homeBets",
+        "drawBets",
+        "awayBets",
+        "totalBets",
+        "updatedAt"
+      ]
+    },
+    "WeeklyLeaderboard": {
+      "title": "WeeklyLeaderboard",
+      "description": "Anonymized weekly player total winnings ranking for the main page leaderboard (zero PII).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "weekKey": { "type": "string", "pattern": "^W[0-9]{1,8}$", "minLength": 2, "maxLength": 12 },
+        "playerMask": { "type": "string", "minLength": 2, "maxLength": 32 },
+        "totalWinnings": { "type": "number" },
+        "winsCount": { "type": "number" },
+        "biggestWin": { "type": "number" },
+        "lastGameName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "uid",
+        "weekKey",
+        "playerMask",
+        "totalWinnings",
+        "winsCount",
+        "biggestWin",
+        "lastGameName",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/settings/telebirr": {
+      "schema": { "$ref": "#/entities/TelebirrSettings" },
+      "description": "Global Telebirr deposit and withdrawal numbers and min/max settings."
+    },
+    "/settings/branding": {
+      "schema": { "$ref": "#/entities/GameBranding" },
+      "description": "Public game logo URL/data URL configured by the admin."
+    },
+    "/settings/gameConfig": {
+      "schema": { "$ref": "#/entities/GameConfig" },
+      "description": "Admin-configured game odds multipliers and table bet limits."
+    },
+    "/admins/{uid}": {
+      "schema": { "$ref": "#/entities/AdminRecord" },
+      "description": "Admin user registry."
+    },
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserWallet" },
+      "description": "Player wallet balance and stats."
+    },
+    "/users/{userId}/private/info": {
+      "schema": { "$ref": "#/entities/UserPrivateInfo" },
+      "description": "Isolated player PII including email and deposit Telebirr phone number."
+    },
+    "/usedTxIds/{txId}": {
+      "schema": { "$ref": "#/entities/UsedTxId" },
+      "description": "Immutable registry of consumed Telebirr transaction IDs."
+    },
+    "/deposits/{depositId}": {
+      "schema": { "$ref": "#/entities/Deposit" },
+      "description": "Verified Telebirr deposit transactions."
+    },
+    "/withdrawals/{withdrawalId}": {
+      "schema": { "$ref": "#/entities/Withdrawal" },
+      "description": "Player Telebirr withdrawal requests."
+    },
+    "/bets/{betId}": {
+      "schema": { "$ref": "#/entities/Bet" },
+      "description": "Player bet and game outcome records."
+    },
+    "/ledger/{entryId}": {
+      "schema": { "$ref": "#/entities/LedgerEntry" },
+      "description": "Income and expense accounting entries."
+    },
+    "/dailyBonuses/{claimId}": {
+      "schema": { "$ref": "#/entities/DailyBonus" },
+      "description": "Daily login bonus claims keyed by uid and UTC date."
+    },
+    "/recentWinners/{winnerId}": {
+      "schema": { "$ref": "#/entities/RecentWinner" },
+      "description": "Public anonymized live winners ticker feed tied to winning bets."
+    },
+    "/footballTickets/{ticketId}": {
+      "schema": { "$ref": "#/entities/FootballTicket" },
+      "description": "Live football betting tickets supporting real-time match tracking and rule-enforced Cashout."
+    },
+    "/footballPopularity/{matchId}": {
+      "schema": { "$ref": "#/entities/FootballPopularity" },
+      "description": "Public match popularity counters incremented atomically when football bets are placed."
+    },
+    "/weeklyLeaderboard/{entryId}": {
+      "schema": { "$ref": "#/entities/WeeklyLeaderboard" },
+      "description": "Weekly total winnings leaderboard entries incremented atomically when bets or football tickets pay out."
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "የእድል ጨዋታ - Telebirr Betting & Wallet",
+  "description": "ቀላል የዳይስ፣ የሳንቲም እና የእድል ቁጥር ጨዋታ ከቴሌብር ዲፖሲት፣ ዊዝድሮው እና የአድሚን ገቢ/ወጪ መዝገብ ጋር።",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

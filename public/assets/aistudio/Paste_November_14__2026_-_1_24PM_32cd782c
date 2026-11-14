@@ -1,0 +1,1436 @@
+<!DOCTYPE html>
+<html lang="am" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ቀላል የቁማር እና የእድል ጨዋታ - Simple Betting Game</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts: Noto Sans Ethiopic -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Ethiopic:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <!-- Phosphor Icons -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['"Noto Sans Ethiopic"', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            font-family: 'Noto Sans Ethiopic', sans-serif;
+            background: radial-gradient(circle at top, #1e293b 0%, #090d16 100%);
+            color: #f8fafc;
+            min-height: 100vh;
+        }
+
+        /* 3D Dice & Coin Animations */
+        .perspective-container {
+            perspective: 800px;
+        }
+
+        @keyframes diceShake {
+            0% { transform: rotateX(0deg) rotateY(0deg) scale(1); }
+            20% { transform: rotateX(140deg) rotateY(90deg) scale(1.12); }
+            40% { transform: rotateX(260deg) rotateY(210deg) scale(0.95); }
+            60% { transform: rotateX(380deg) rotateY(300deg) scale(1.15); }
+            80% { transform: rotateX(500deg) rotateY(420deg) scale(1.05); }
+            100% { transform: rotateX(720deg) rotateY(720deg) scale(1); }
+        }
+
+        .animate-dice-roll {
+            animation: diceShake 0.85s cubic-bezier(0.22, 1, 0.36, 1);
+        }
+
+        @keyframes coinSpin {
+            0% { transform: rotateY(0deg) translateY(0px) scale(1); }
+            25% { transform: rotateY(540deg) translateY(-28px) scale(1.15); }
+            50% { transform: rotateY(1080deg) translateY(-38px) scale(1.2); }
+            75% { transform: rotateY(1620deg) translateY(-18px) scale(1.1); }
+            100% { transform: rotateY(2160deg) translateY(0px) scale(1); }
+        }
+
+        .animate-coin-flip {
+            animation: coinSpin 0.95s cubic-bezier(0.25, 1, 0.5, 1);
+        }
+
+        @keyframes popWin {
+            0% { transform: scale(0.85); opacity: 0; }
+            60% { transform: scale(1.06); opacity: 1; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+
+        .animate-pop-win {
+            animation: popWin 0.35s ease-out forwards;
+        }
+
+        /* Dice Dot Grid */
+        .dice-face {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            grid-template-rows: repeat(3, 1fr);
+            gap: 6px;
+            padding: 16px;
+            background: linear-gradient(145deg, #ffffff, #e2e8f0);
+            box-shadow: inset 0 -6px 12px rgba(0,0,0,0.18), 0 14px 30px rgba(0,0,0,0.55);
+        }
+
+        .pip {
+            width: 18px;
+            height: 18px;
+            border-radius: 9999px;
+            background: #0f172a;
+            box-shadow: inset 0 2px 3px rgba(0,0,0,0.6);
+            margin: auto;
+        }
+        .pip.red {
+            background: #e11d48;
+        }
+    </style>
+</head>
+<body class="antialiased pb-12 selection:bg-amber-500 selection:text-slate-950">
+
+    <!-- Header & Virtual Wallet Bar -->
+    <header class="sticky top-0 z-30 bg-slate-950/85 backdrop-blur-md border-b border-slate-800/80 shadow-xl">
+        <div class="max-w-4xl mx-auto px-4 py-3.5 flex flex-wrap items-center justify-between gap-3">
+            <!-- Brand Title -->
+            <div class="flex items-center gap-3">
+                <div class="w-11 h-11 rounded-2xl bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center text-slate-950 shadow-lg shadow-amber-500/20">
+                    <i class="ph-fill ph-crown text-2xl"></i>
+                </div>
+                <div>
+                    <h1 class="text-lg sm:text-xl font-extrabold tracking-tight text-white flex items-center gap-2">
+                        <span>የእድል ጨዋታ</span>
+                        <span class="text-[11px] font-bold uppercase px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30">VIP</span>
+                    </h1>
+                    <p class="text-xs text-slate-400">ቀላል እና ፈጣን የቨርቹዋል ውርርድ ሲስተም</p>
+                </div>
+            </div>
+
+            <!-- Wallet & Controls -->
+            <div class="flex items-center gap-2.5 ml-auto sm:ml-0">
+                <!-- Balance Display -->
+                <div class="bg-slate-900 border border-amber-500/40 rounded-2xl px-4 py-2 flex items-center gap-2.5 shadow-inner">
+                    <div class="text-amber-400">
+                        <i class="ph-fill ph-coins text-xl"></i>
+                    </div>
+                    <div>
+                        <span class="block text-[10px] font-semibold text-slate-400 leading-none">ቀሪ ሂሳብ</span>
+                        <span id="balanceDisplay" class="text-base sm:text-lg font-black text-amber-400 tracking-wide">1,000.00 ብር</span>
+                    </div>
+                </div>
+
+                <!-- Top-up Button -->
+                <button id="topUpBtn" onclick="topUpBalance()" title="ሂሳብ ሙላ (1,000 ብር)"
+                    class="bg-emerald-600 hover:bg-emerald-500 active:scale-95 transition text-white px-3.5 py-2.5 rounded-2xl text-xs sm:text-sm font-bold flex items-center gap-1.5 shadow-lg shadow-emerald-600/20 cursor-pointer">
+                    <i class="ph-bold ph-plus-circle text-lg"></i>
+                    <span class="hidden sm:inline">ሂሳብ ሙላ (1,000 ብር)</span>
+                    <span class="sm:hidden">ሙላ</span>
+                </button>
+
+                <!-- Sound Toggle Button -->
+                <button id="soundToggleBtn" onclick="toggleSound()" title="ድምጽ አብራ/አጥፋ"
+                    class="w-10 h-10 rounded-2xl bg-slate-800 hover:bg-slate-700 border border-slate-700 flex items-center justify-center text-slate-200 transition cursor-pointer">
+                    <i id="soundIcon" class="ph-fill ph-speaker-high text-xl text-amber-400"></i>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Toast / Inline Alert Banner -->
+    <div id="toastBanner" class="fixed bottom-5 right-5 left-5 sm:left-auto z-50 transform translate-y-28 opacity-0 transition-all duration-300 pointer-events-none">
+        <div id="toastCard" class="bg-slate-900 border border-slate-700 text-white px-5 py-3.5 rounded-2xl shadow-2xl flex items-center gap-3 max-w-md mx-auto">
+            <i id="toastIcon" class="ph-fill ph-info text-2xl text-amber-400"></i>
+            <p id="toastText" class="text-sm font-bold"></p>
+        </div>
+    </div>
+
+    <main class="max-w-4xl mx-auto px-4 pt-6 space-y-6">
+
+        <!-- Game Mode Selector Tabs -->
+        <nav aria-label="የጨዋታ ምርጫ" class="grid grid-cols-3 gap-2.5 bg-slate-900/90 p-2 rounded-2xl border border-slate-800 shadow-lg">
+            <button onclick="switchGame('dice')" id="tab-dice"
+                class="game-tab py-3 px-3 rounded-xl font-bold text-xs sm:text-sm flex flex-col sm:flex-row items-center justify-center gap-1.5 sm:gap-2 transition cursor-pointer bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 shadow-md">
+                <i class="ph-fill ph-dice-five text-xl"></i>
+                <span>የዳይስ ጨዋታ</span>
+            </button>
+
+            <button onclick="switchGame('coin')" id="tab-coin"
+                class="game-tab py-3 px-3 rounded-xl font-bold text-xs sm:text-sm flex flex-col sm:flex-row items-center justify-center gap-1.5 sm:gap-2 transition cursor-pointer text-slate-300 hover:bg-slate-800">
+                <i class="ph-fill ph-coin text-xl"></i>
+                <span>የሳንቲም ውርርድ</span>
+            </button>
+
+            <button onclick="switchGame('lucky')" id="tab-lucky"
+                class="game-tab py-3 px-3 rounded-xl font-bold text-xs sm:text-sm flex flex-col sm:flex-row items-center justify-center gap-1.5 sm:gap-2 transition cursor-pointer text-slate-300 hover:bg-slate-800">
+                <i class="ph-fill ph-sparkle text-xl"></i>
+                <span>የእድል ቁጥር (1-20)</span>
+            </button>
+        </nav>
+
+        <!-- Main Arena Card -->
+        <section class="bg-slate-900/95 border border-slate-800 rounded-3xl p-5 sm:p-8 shadow-2xl relative overflow-hidden">
+            <!-- Subtle Ambient Glow -->
+            <div class="absolute -top-24 -right-24 w-64 h-64 bg-amber-500/10 rounded-full blur-3xl pointer-events-none"></div>
+            <div class="absolute -bottom-24 -left-24 w-64 h-64 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none"></div>
+
+            <!-- 1. EXPANDED DICE GAME -->
+            <div id="panel-dice" class="game-panel space-y-6">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-4">
+                    <div>
+                        <h2 class="text-xl sm:text-2xl font-extrabold text-white">🎲 የዳይስ ጨዋታ (ቁጥሮች 1 - 100)</h2>
+                        <p id="diceModeSubtitle" class="text-xs sm:text-sm text-slate-400 mt-0.5">የዳይስ አይነት ይምረጡ እና ትክክለኛውን ቁጥር ወይም ክልል ይገምቱ!</p>
+                    </div>
+                    <span id="diceCurrentMultiplierBadge" class="self-start sm:self-center px-3 py-1 rounded-full text-xs font-extrabold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                        ሽልማት: 2x
+                    </span>
+                </div>
+
+                <!-- Dice Mode Sub-Selector -->
+                <div class="grid grid-cols-3 gap-2 bg-slate-950/90 p-1.5 rounded-2xl border border-slate-800">
+                    <button type="button" onclick="setDiceSubMode('single')" id="diceSub-single"
+                        class="dice-sub-btn py-2.5 px-2 rounded-xl text-xs sm:text-sm font-extrabold transition cursor-pointer bg-amber-500 text-slate-950 shadow">
+                        ባለ 1 ዳይስ (1-6)
+                    </button>
+                    <button type="button" onclick="setDiceSubMode('double')" id="diceSub-double"
+                        class="dice-sub-btn py-2.5 px-2 rounded-xl text-xs sm:text-sm font-extrabold transition cursor-pointer text-slate-300 hover:bg-slate-800">
+                        ባለ 2 ዳይስ (2-12)
+                    </button>
+                    <button type="button" onclick="setDiceSubMode('d100')" id="diceSub-d100"
+                        class="dice-sub-btn py-2.5 px-2 rounded-xl text-xs sm:text-sm font-extrabold transition cursor-pointer text-slate-300 hover:bg-slate-800">
+                        ባለ 100 ዳይስ (1-100)
+                    </button>
+                </div>
+
+                <!-- Visual Stage -->
+                <div class="bg-slate-950/80 border border-slate-800/90 rounded-2xl py-7 px-4 flex flex-col items-center justify-center min-h-[210px] perspective-container">
+                    <!-- Single Die Visual -->
+                    <div id="diceStageSingle" class="flex items-center justify-center">
+                        <div id="diceVisual" class="w-28 h-28 rounded-2xl dice-face transition-transform">
+                            <div class="pip"></div><div></div><div class="pip"></div>
+                            <div></div><div class="pip red"></div><div></div>
+                            <div class="pip"></div><div></div><div class="pip"></div>
+                        </div>
+                    </div>
+
+                    <!-- Double Dice Visual -->
+                    <div id="diceStageDouble" class="hidden flex flex-col items-center">
+                        <div class="flex items-center gap-4 sm:gap-6">
+                            <div id="diceVisual1" class="w-24 h-24 sm:w-28 sm:h-28 rounded-2xl dice-face transition-transform">
+                                <div class="pip"></div><div></div><div class="pip"></div>
+                                <div></div><div></div><div></div>
+                                <div class="pip"></div><div></div><div class="pip"></div>
+                            </div>
+                            <div id="diceVisual2" class="w-24 h-24 sm:w-28 sm:h-28 rounded-2xl dice-face transition-transform">
+                                <div class="pip"></div><div></div><div></div>
+                                <div></div><div class="pip"></div><div></div>
+                                <div></div><div></div><div class="pip"></div>
+                            </div>
+                        </div>
+                        <div id="doubleDiceSumBadge" class="mt-3 px-3.5 py-1 rounded-full bg-slate-900 border border-slate-700 text-xs font-extrabold text-amber-400">
+                            ድምር: 7
+                        </div>
+                    </div>
+
+                    <!-- 1-100 Digital Die Visual -->
+                    <div id="diceStageD100" class="hidden flex flex-col items-center">
+                        <div id="d100VisualBox" class="w-36 h-32 rounded-3xl bg-gradient-to-br from-slate-800 via-slate-900 to-slate-950 border-2 border-amber-500/60 shadow-[0_0_35px_rgba(245,158,11,0.25)] flex flex-col items-center justify-center relative">
+                            <span class="text-[10px] font-bold uppercase tracking-widest text-slate-400">D100 ቁጥር</span>
+                            <span id="d100NumberDisplay" class="text-5xl sm:text-6xl font-black text-amber-400 tracking-tight mt-0.5">50</span>
+                        </div>
+                    </div>
+
+                    <p id="diceStatusLabel" class="mt-4 text-sm font-bold text-slate-400 text-center">ምርጫዎን ይምረጡና ዳይሱን ይወርውሩ</p>
+                </div>
+
+                <!-- MODE A: SINGLE DIE CONTROLS (1-6) -->
+                <div id="controls-dice-single" class="space-y-4">
+                    <div>
+                        <label class="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">1ሀ. ዝቅተኛ ወይም ከፍተኛ ይምረጡ (2x)</label>
+                        <div class="grid grid-cols-2 gap-3">
+                            <button type="button" onclick="selectSingleDiceBet('low', null)" id="btnSingle-low"
+                                class="single-dice-btn p-3.5 rounded-2xl border-2 border-amber-500 bg-amber-500/15 text-white flex flex-col items-center justify-center transition cursor-pointer">
+                                <span class="text-base font-black text-amber-400">ዝቅተኛ (1 - 3)</span>
+                                <span class="text-[11px] text-slate-300">ሽልማት: 2x</span>
+                            </button>
+                            <button type="button" onclick="selectSingleDiceBet('high', null)" id="btnSingle-high"
+                                class="single-dice-btn p-3.5 rounded-2xl border-2 border-slate-800 bg-slate-950/60 hover:border-slate-700 text-slate-300 flex flex-col items-center justify-center transition cursor-pointer">
+                                <span class="text-base font-black">ከፍተኛ (4 - 6)</span>
+                                <span class="text-[11px] text-slate-400">ሽልማት: 2x</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">1ለ. ወይም ትክክለኛ ቁጥር ይምረጡ (5.5x)</label>
+                        <div class="grid grid-cols-6 gap-2">
+                            <button type="button" onclick="selectSingleDiceBet('exact', 1)" id="btnSingleExact-1" class="single-dice-btn py-3 rounded-xl border-2 border-slate-800 bg-slate-950/60 hover:border-slate-700 text-slate-200 font-black text-lg transition cursor-pointer">1</button>
+                            <button type="button" onclick="selectSingleDiceBet('exact', 2)" id="btnSingleExact-2" class="single-dice-btn py-3 rounded-xl border-2 border-slate-800 bg-slate-950/60 hover:border-slate-700 text-slate-200 font-black text-lg transition cursor-pointer">2</button>
+                            <button type="button" onclick="selectSingleDiceBet('exact', 3)" id="btnSingleExact-3" class="single-dice-btn py-3 rounded-xl border-2 border-slate-800 bg-slate-950/60 hover:border-slate-700 text-slate-200 font-black text-lg transition cursor-pointer">3</button>
+                            <button type="button" onclick="selectSingleDiceBet('exact', 4)" id="btnSingleExact-4" class="single-dice-btn py-3 rounded-xl border-2 border-slate-800 bg-slate-950/60 hover:border-slate-700 text-slate-200 font-black text-lg transition cursor-pointer">4</button>
+                            <button type="button" onclick="selectSingleDiceBet('exact', 5)" id="btnSingleExact-5" class="single-dice-btn py-3 rounded-xl border-2 border-slate-800 bg-slate-950/60 hover:border-slate-700 text-slate-200 font-black text-lg transition cursor-pointer">5</button>
+                            <button type="button" onclick="selectSingleDiceBet('exact', 6)" id="btnSingleExact-6" class="single-dice-btn py-3 rounded-xl border-2 border-slate-800 bg-slate-950/60 hover:border-slate-700 text-slate-200 font-black text-lg transition cursor-pointer">6</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- MODE B: DOUBLE DICE CONTROLS (SUM 2-12) -->
+                <div id="controls-dice-double" class="hidden space-y-4">
+                    <div>
+                        <label class="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">1ሀ. ፈጣን ክልል ይምረጡ</label>
+                        <div class="grid grid-cols-3 gap-2.5">
+                            <button type="button" onclick="selectDoubleDiceBet('low', null)" id="btnDouble-low"
+                                class="double-dice-btn p-3 rounded-2xl border-2 border-amber-500 bg-amber-500/15 text-white flex flex-col items-center transition cursor-pointer">
+                                <span class="text-sm sm:text-base font-black text-amber-400">ዝቅተኛ (2-6)</span>
+                                <span class="text-[11px] text-slate-300">2.2x</span>
+                            </button>
+                            <button type="button" onclick="selectDoubleDiceBet('lucky7', null)" id="btnDouble-lucky7"
+                                class="double-dice-btn p-3 rounded-2xl border-2 border-slate-800 bg-slate-950/60 hover:border-slate-700 text-slate-300 flex flex-col items-center transition cursor-pointer">
+                                <span class="text-sm sm:text-base font-black">እድለኛ 7</span>
+                                <span class="text-[11px] text-slate-400">5x</span>
+                            </button>
+                            <button type="button" onclick="selectDoubleDiceBet('high', null)" id="btnDouble-high"
+                                class="double-dice-btn p-3 rounded-2xl border-2 border-slate-800 bg-slate-950/60 hover:border-slate-700 text-slate-300 flex flex-col items-center transition cursor-pointer">
+                                <span class="text-sm sm:text-base font-black">ከፍተኛ (8-12)</span>
+                                <span class="text-[11px] text-slate-400">2.2x</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">1ለ. ወይም ትክክለኛ ድምር ይምረጡ (ከ 2 እስከ 12)</label>
+                        <div id="doubleSumGrid" class="grid grid-cols-4 sm:grid-cols-6 gap-2">
+                            <!-- Populated via JS for sums 2 to 12 with exact payouts -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- MODE C: D100 HIGH NUMBER CONTROLS (1-100) -->
+                <div id="controls-dice-d100" class="hidden space-y-4">
+                    <div>
+                        <label class="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">1ሀ. ፈጣን ክልል ይምረጡ (1 - 100)</label>
+                        <div class="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                            <button type="button" onclick="setD100Preset('under', 26, 'p1')" id="d100Preset-p1"
+                                class="d100-preset-btn p-2.5 rounded-xl border-2 border-slate-800 bg-slate-950/60 hover:border-slate-700 text-slate-200 flex flex-col items-center transition cursor-pointer">
+                                <span class="text-xs font-black">1 - 25</span>
+                                <span class="text-[11px] text-emerald-400 font-bold">3.8x</span>
+                            </button>
+                            <button type="button" onclick="setD100Preset('under', 51, 'p2')" id="d100Preset-p2"
+                                class="d100-preset-btn p-2.5 rounded-xl border-2 border-amber-500 bg-amber-500/15 text-amber-400 flex flex-col items-center transition cursor-pointer">
+                                <span class="text-xs font-black">1 - 50</span>
+                                <span class="text-[11px] text-emerald-400 font-bold">1.95x</span>
+                            </button>
+                            <button type="button" onclick="setD100Preset('over', 50, 'p3')" id="d100Preset-p3"
+                                class="d100-preset-btn p-2.5 rounded-xl border-2 border-slate-800 bg-slate-950/60 hover:border-slate-700 text-slate-200 flex flex-col items-center transition cursor-pointer">
+                                <span class="text-xs font-black">51 - 100</span>
+                                <span class="text-[11px] text-emerald-400 font-bold">1.95x</span>
+                            </button>
+                            <button type="button" onclick="setD100Preset('over', 75, 'p4')" id="d100Preset-p4"
+                                class="d100-preset-btn p-2.5 rounded-xl border-2 border-slate-800 bg-slate-950/60 hover:border-slate-700 text-slate-200 flex flex-col items-center transition cursor-pointer">
+                                <span class="text-xs font-black">76 - 100</span>
+                                <span class="text-[11px] text-emerald-400 font-bold">3.8x</span>
+                            </button>
+                            <button type="button" onclick="setD100Preset('over', 89, 'p5')" id="d100Preset-p5"
+                                class="d100-preset-btn col-span-2 sm:col-span-1 p-2.5 rounded-xl border-2 border-slate-800 bg-slate-950/60 hover:border-slate-700 text-slate-200 flex flex-col items-center transition cursor-pointer">
+                                <span class="text-xs font-black">90 - 100</span>
+                                <span class="text-[11px] text-amber-400 font-bold">8.8x</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Custom Target Slider -->
+                    <div class="bg-slate-950/70 border border-slate-800 rounded-2xl p-4 space-y-3">
+                        <div class="flex flex-wrap items-center justify-between gap-2">
+                            <div class="flex items-center gap-2">
+                                <button type="button" onclick="setD100Direction('under')" id="btnD100Under"
+                                    class="px-3.5 py-1.5 rounded-xl text-xs font-black bg-amber-500 text-slate-950 transition cursor-pointer">
+                                    በታች (Under)
+                                </button>
+                                <button type="button" onclick="setD100Direction('over')" id="btnD100Over"
+                                    class="px-3.5 py-1.5 rounded-xl text-xs font-black bg-slate-800 text-slate-300 hover:bg-slate-700 transition cursor-pointer">
+                                    በላይ (Over)
+                                </button>
+                            </div>
+                            <span id="d100RuleSummary" class="text-xs sm:text-sm font-extrabold text-amber-400">
+                                ከ 51 በታች (1 - 50) • እድል: 50%
+                            </span>
+                        </div>
+
+                        <div class="flex items-center gap-3">
+                            <span class="text-xs font-bold text-slate-400">2</span>
+                            <input type="range" id="d100TargetSlider" min="2" max="99" value="51" oninput="onD100SliderChange()"
+                                class="w-full accent-amber-500 h-2.5 bg-slate-800 rounded-lg cursor-pointer">
+                            <span class="text-xs font-bold text-slate-400">99</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 2. COIN FLIP GAME -->
+            <div id="panel-coin" class="game-panel hidden space-y-6">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-4">
+                    <div>
+                        <h2 class="text-xl sm:text-2xl font-extrabold text-white">🪙 የሳንቲም ውርርድ (ዘውድ ወይም ጎራዴ)</h2>
+                        <p class="text-xs sm:text-sm text-slate-400 mt-0.5">ሳንቲሙ ሲገለበጥ የሚያርፍበትን ገጽ ይምረጡ — ትክክል ከሆኑ <span class="text-emerald-400 font-bold">2 እጥፍ (2x)</span> ያሸንፋሉ!</p>
+                    </div>
+                    <span class="self-start sm:self-center px-3 py-1 rounded-full text-xs font-extrabold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                        ሽልማት: 2x
+                    </span>
+                </div>
+
+                <!-- Visual Stage -->
+                <div class="bg-slate-950/80 border border-slate-800/90 rounded-2xl py-8 px-4 flex flex-col items-center justify-center min-h-[210px] perspective-container">
+                    <div id="coinVisual" class="w-28 h-28 rounded-full bg-gradient-to-br from-amber-300 via-amber-500 to-amber-700 border-4 border-amber-200 shadow-[0_10px_35px_rgba(245,158,11,0.4)] flex flex-col items-center justify-center text-slate-950">
+                        <i id="coinIcon" class="ph-fill ph-crown text-4xl"></i>
+                        <span id="coinFaceText" class="text-sm font-black mt-0.5">ዘውድ</span>
+                    </div>
+                    <p id="coinStatusLabel" class="mt-4 text-sm font-bold text-slate-400">ዘውድ ወይም ጎራዴ ይምረጡ</p>
+                </div>
+
+                <!-- Choice Buttons -->
+                <div>
+                    <label class="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-2.5">1. ገጽ ይምረጡ</label>
+                    <div class="grid grid-cols-2 gap-3.5">
+                        <button type="button" onclick="selectCoinChoice('heads')" id="btnCoinHeads"
+                            class="p-4 rounded-2xl border-2 border-amber-500 bg-amber-500/15 text-white flex items-center justify-center gap-3 transition cursor-pointer">
+                            <i class="ph-fill ph-crown text-2xl text-amber-400"></i>
+                            <span class="text-base sm:text-lg font-black text-amber-400">ዘውድ (Heads)</span>
+                        </button>
+                        <button type="button" onclick="selectCoinChoice('tails')" id="btnCoinTails"
+                            class="p-4 rounded-2xl border-2 border-slate-800 bg-slate-950/60 hover:border-slate-700 text-slate-300 flex items-center justify-center gap-3 transition cursor-pointer">
+                            <i class="ph-fill ph-sword text-2xl"></i>
+                            <span class="text-base sm:text-lg font-black">ጎራዴ (Tails)</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 3. LUCKY NUMBER (1-20) GAME -->
+            <div id="panel-lucky" class="game-panel hidden space-y-6">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-4">
+                    <div>
+                        <h2 class="text-xl sm:text-2xl font-extrabold text-white">🎯 የእድል ቁጥር (ከ 1 እስከ 20)</h2>
+                        <p class="text-xs sm:text-sm text-slate-400 mt-0.5">ከ 1 እስከ 20 አንድ የእድል ቁጥር ይምረጡ — ካሸነፉ <span class="text-amber-400 font-bold">18 እጥፍ (18x)</span> ያገኛሉ!</p>
+                    </div>
+                    <span class="self-start sm:self-center px-3 py-1 rounded-full text-xs font-extrabold bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                        ሽልማት: 18x
+                    </span>
+                </div>
+
+                <!-- Visual Stage -->
+                <div class="bg-slate-950/80 border border-slate-800/90 rounded-2xl py-8 px-4 flex flex-col items-center justify-center min-h-[210px]">
+                    <div id="luckyVisual" class="w-28 h-28 rounded-3xl bg-gradient-to-br from-slate-800 to-slate-950 border-2 border-amber-500/50 shadow-[0_0_30px_rgba(245,158,11,0.2)] flex items-center justify-center">
+                        <span id="luckyNumberDisplay" class="text-5xl font-black text-amber-400">?</span>
+                    </div>
+                    <p id="luckyStatusLabel" class="mt-4 text-sm font-bold text-slate-400">ከ 1 እስከ 20 የሚወጣውን የእድል ቁጥር ይምረጡ</p>
+                </div>
+
+                <!-- Number Picker 1-20 -->
+                <div>
+                    <label class="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-2.5">1. የእድል ቁጥርዎን ይምረጡ (1 - 20)</label>
+                    <div id="luckyNumberGrid" class="grid grid-cols-5 sm:grid-cols-10 gap-2">
+                        <!-- Dynamically generated 1 to 20 buttons -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Outcome Banner (Shown after a round) -->
+            <div id="resultBanner" class="hidden mt-6 p-4 rounded-2xl border text-center">
+                <p id="resultBannerTitle" class="text-lg sm:text-xl font-black"></p>
+                <p id="resultBannerSub" class="text-xs sm:text-sm mt-1 font-medium"></p>
+            </div>
+
+            <!-- Shared Bet Controls -->
+            <div class="mt-6 pt-6 border-t border-slate-800 space-y-4">
+                <div>
+                    <div class="flex items-center justify-between mb-2">
+                        <label for="betAmountInput" class="text-xs font-bold uppercase tracking-wider text-slate-400">2. የመወራረጃ መጠን (በብር)</label>
+                        <span id="potentialWinHint" class="text-xs font-bold text-emerald-400">ሊያሸንፉ የሚችሉት: 200.00 ብር</span>
+                    </div>
+
+                    <div class="flex flex-col sm:flex-row gap-3">
+                        <!-- Bet Input -->
+                        <div class="relative flex-1">
+                            <input type="number" id="betAmountInput" value="100" min="1" step="1" oninput="updatePotentialWin()"
+                                class="w-full bg-slate-950 border-2 border-slate-700 focus:border-amber-500 rounded-2xl px-4 py-3.5 text-xl font-black text-white outline-none transition pr-14">
+                            <span class="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-sm">ብር</span>
+                        </div>
+
+                        <!-- Quick Preset Buttons -->
+                        <div class="grid grid-cols-5 gap-1.5 sm:w-auto">
+                            <button type="button" onclick="setBetAmount(50)" class="px-3 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-200 transition cursor-pointer">50</button>
+                            <button type="button" onclick="setBetAmount(100)" class="px-3 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-200 transition cursor-pointer">100</button>
+                            <button type="button" onclick="setBetAmount(250)" class="px-3 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-200 transition cursor-pointer">250</button>
+                            <button type="button" onclick="setBetAmount(500)" class="px-3 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-200 transition cursor-pointer">500</button>
+                            <button type="button" onclick="setAllInBet()" class="px-3 py-2.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-xs font-extrabold text-amber-400 transition cursor-pointer">ሁሉንም</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Primary Play Action Button -->
+                <button id="playActionBtn" onclick="playCurrentGame()"
+                    class="w-full py-4 px-6 rounded-2xl bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 active:scale-[0.99] text-slate-950 font-black text-lg sm:text-xl shadow-xl shadow-emerald-600/25 flex items-center justify-center gap-2.5 transition cursor-pointer">
+                    <i class="ph-fill ph-play-circle text-2xl"></i>
+                    <span id="playBtnText">ዳይሱን ወርውር (100 ብር)</span>
+                </button>
+            </div>
+        </section>
+
+        <!-- Recent Bets History Section -->
+        <section class="bg-slate-900/90 border border-slate-800 rounded-3xl p-5 sm:p-6 shadow-xl">
+            <div class="flex items-center justify-between mb-4 pb-3 border-b border-slate-800">
+                <div class="flex items-center gap-2.5">
+                    <div class="w-9 h-9 rounded-xl bg-slate-800 flex items-center justify-center text-amber-400">
+                        <i class="ph-bold ph-clock-counter-clockwise text-xl"></i>
+                    </div>
+                    <div>
+                        <h3 class="text-base sm:text-lg font-extrabold text-white">የጨዋታ ታሪክ (Recent Bets)</h3>
+                        <p class="text-xs text-slate-400">የቅርብ ጊዜ ውርርዶችዎ ዝርዝር</p>
+                    </div>
+                </div>
+                <button onclick="clearHistory()" class="text-xs font-bold text-slate-400 hover:text-rose-400 px-3 py-1.5 rounded-xl hover:bg-slate-800 transition cursor-pointer">
+                    ታሪክ አጽዳ
+                </button>
+            </div>
+
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="text-[11px] font-bold uppercase text-slate-400 border-b border-slate-800">
+                            <th class="py-2.5 px-3">የጨዋታ አይነት</th>
+                            <th class="py-2.5 px-3">የተመደበ</th>
+                            <th class="py-2.5 px-3">ውጤት</th>
+                            <th class="py-2.5 px-3 text-right">ክፍያ / ትርፍ</th>
+                        </tr>
+                    </thead>
+                    <tbody id="historyTableBody" class="divide-y divide-slate-800/70 text-xs sm:text-sm">
+                        <!-- Dynamically populated -->
+                    </tbody>
+                </table>
+            </div>
+
+            <div id="emptyHistoryState" class="py-8 text-center text-slate-500 text-sm">
+                እስካሁን ምንም ጨዋታ አልተጫወቱም። ከላይ ካሉት ጨዋታዎች አንዱን ይሞክሩ!
+            </div>
+        </section>
+
+        <!-- Entertainment Disclaimer Footer -->
+        <footer class="text-center pt-2 pb-6 space-y-1.5">
+            <div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-slate-900 border border-slate-800 text-xs text-slate-400">
+                <i class="ph-fill ph-info text-amber-400 text-base"></i>
+                <span>ማሳሰቢያ፡ ይህ ሲስተም <strong>ለመዝናኛ ብቻ የተዘጋጀ የቨርቹዋል ጨዋታ</strong> ሲሆን እውነተኛ ገንዘብ አይጠቀምም።</span>
+            </div>
+        </footer>
+
+    </main>
+
+    <script>
+        // --- Game State ---
+        const STORAGE_KEY = 'ethio_virtual_betting_v2';
+        const DOUBLE_SUM_MULTIPLIERS = {
+            2: 30,
+            3: 15,
+            4: 10,
+            5: 8,
+            6: 6,
+            7: 5,
+            8: 6,
+            9: 8,
+            10: 10,
+            11: 15,
+            12: 30
+        };
+
+        let state = {
+            balance: 1000,
+            activeGame: 'dice',      // 'dice' | 'coin' | 'lucky'
+            diceSubMode: 'single',   // 'single' | 'double' | 'd100'
+            singleDiceMode: 'low',   // 'low' | 'high' | 'exact'
+            singleDiceExact: 6,      // 1..6
+            doubleDiceMode: 'low',   // 'low' | 'lucky7' | 'high' | 'exact'
+            doubleDiceExact: 7,      // 2..12
+            d100Direction: 'under',  // 'under' | 'over'
+            d100Target: 51,          // 2..99
+            coinChoice: 'heads',     // 'heads' | 'tails'
+            luckyChoice: 7,          // 1..20
+            isRolling: false,
+            soundEnabled: true,
+            history: []
+        };
+
+        // --- Web Audio API Sound Synthesizer (Zero external assets needed) ---
+        let audioCtx = null;
+
+        function ensureAudioContext() {
+            if (!audioCtx) {
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                audioCtx = new AudioContext();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+
+        function playSound(type) {
+            if (!state.soundEnabled) return;
+            try {
+                ensureAudioContext();
+                const now = audioCtx.currentTime;
+
+                if (type === 'click') {
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(520, now);
+                    osc.frequency.exponentialRampToValueAtTime(300, now + 0.06);
+                    gain.gain.setValueAtTime(0.12, now);
+                    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(now);
+                    osc.stop(now + 0.06);
+                } else if (type === 'roll') {
+                    // Rapid mechanical ticks
+                    for (let i = 0; i < 6; i++) {
+                        const t = now + i * 0.11;
+                        const osc = audioCtx.createOscillator();
+                        const gain = audioCtx.createGain();
+                        osc.type = 'triangle';
+                        osc.frequency.setValueAtTime(240 + (i * 45), t);
+                        gain.gain.setValueAtTime(0.14, t);
+                        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.07);
+                        osc.connect(gain);
+                        gain.connect(audioCtx.destination);
+                        osc.start(t);
+                        osc.stop(t + 0.07);
+                    }
+                } else if (type === 'win') {
+                    // Ascending celebratory chord
+                    const notes = [523.25, 659.25, 783.99, 1046.50]; // C5, E5, G5, C6
+                    notes.forEach((freq, idx) => {
+                        const t = now + idx * 0.08;
+                        const osc = audioCtx.createOscillator();
+                        const gain = audioCtx.createGain();
+                        osc.type = 'triangle';
+                        osc.frequency.setValueAtTime(freq, t);
+                        gain.gain.setValueAtTime(0.18, t);
+                        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+                        osc.connect(gain);
+                        gain.connect(audioCtx.destination);
+                        osc.start(t);
+                        osc.stop(t + 0.35);
+                    });
+                } else if (type === 'lose') {
+                    // Descending low tone
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(210, now);
+                    osc.frequency.linearRampToValueAtTime(110, now + 0.32);
+                    gain.gain.setValueAtTime(0.14, now);
+                    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.34);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(now);
+                    osc.stop(now + 0.34);
+                }
+            } catch (e) {
+                // Ignore audio errors on restricted browsers
+            }
+        }
+
+        function toggleSound() {
+            state.soundEnabled = !state.soundEnabled;
+            const icon = document.getElementById('soundIcon');
+            if (state.soundEnabled) {
+                icon.className = 'ph-fill ph-speaker-high text-xl text-amber-400';
+                playSound('click');
+                showToast('ድምጽ በርቷል', 'info');
+            } else {
+                icon.className = 'ph-fill ph-speaker-slash text-xl text-slate-500';
+                showToast('ድምጽ ጠፍቷል', 'info');
+            }
+            saveState();
+        }
+
+        // --- Formatting Helpers ---
+        function formatETB(num) {
+            return Number(num).toLocaleString('en-US', {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2
+            }) + ' ብር';
+        }
+
+        // --- Persistence ---
+        function loadState() {
+            try {
+                const raw = localStorage.getItem(STORAGE_KEY);
+                if (raw) {
+                    const parsed = JSON.parse(raw);
+                    if (typeof parsed.balance === 'number') state.balance = parsed.balance;
+                    if (Array.isArray(parsed.history)) state.history = parsed.history;
+                    if (typeof parsed.soundEnabled === 'boolean') state.soundEnabled = parsed.soundEnabled;
+                }
+            } catch (e) {
+                console.warn('Could not load saved game state');
+            }
+        }
+
+        function saveState() {
+            try {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify({
+                    balance: state.balance,
+                    history: state.history.slice(0, 25),
+                    soundEnabled: state.soundEnabled
+                }));
+            } catch (e) {}
+        }
+
+        // --- UI Updates ---
+        function updateBalanceUI() {
+            document.getElementById('balanceDisplay').textContent = formatETB(state.balance);
+            const topUpBtn = document.getElementById('topUpBtn');
+            if (state.balance < 50) {
+                topUpBtn.classList.add('animate-pulse', 'ring-2', 'ring-emerald-300');
+            } else {
+                topUpBtn.classList.remove('animate-pulse', 'ring-2', 'ring-emerald-300');
+            }
+        }
+
+        function topUpBalance() {
+            if (state.isRolling) return;
+            playSound('win');
+            if (state.balance < 1000) {
+                state.balance = 1000;
+                showToast('ቀሪ ሂሳብዎ ወደ 1,000.00 ብር ተሞልቷል!', 'win');
+            } else {
+                state.balance += 1000;
+                showToast('+1,000.00 ብር ተጨምሯል!', 'win');
+            }
+            saveState();
+            updateBalanceUI();
+            updatePotentialWin();
+        }
+
+        // --- Game Switching ---
+        function switchGame(gameKey) {
+            if (state.isRolling) return;
+            playSound('click');
+            state.activeGame = gameKey;
+
+            // Update Tab Styles
+            document.querySelectorAll('.game-tab').forEach(btn => {
+                btn.className = 'game-tab py-3 px-3 rounded-xl font-bold text-xs sm:text-sm flex flex-col sm:flex-row items-center justify-center gap-1.5 sm:gap-2 transition cursor-pointer text-slate-300 hover:bg-slate-800';
+            });
+            const activeTab = document.getElementById(`tab-${gameKey}`);
+            activeTab.className = 'game-tab py-3 px-3 rounded-xl font-bold text-xs sm:text-sm flex flex-col sm:flex-row items-center justify-center gap-1.5 sm:gap-2 transition cursor-pointer bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 shadow-md';
+
+            // Show Active Panel
+            document.querySelectorAll('.game-panel').forEach(p => p.classList.add('hidden'));
+            document.getElementById(`panel-${gameKey}`).classList.remove('hidden');
+
+            // Hide previous result banner
+            document.getElementById('resultBanner').classList.add('hidden');
+
+            updatePotentialWin();
+        }
+
+        // --- Dice Sub-Mode & Option Handlers ---
+        function setDiceSubMode(subMode) {
+            if (state.isRolling) return;
+            playSound('click');
+            state.diceSubMode = subMode;
+
+            // Update sub-mode tab buttons
+            document.querySelectorAll('.dice-sub-btn').forEach(btn => {
+                btn.className = 'dice-sub-btn py-2.5 px-2 rounded-xl text-xs sm:text-sm font-extrabold transition cursor-pointer text-slate-300 hover:bg-slate-800';
+            });
+            document.getElementById(`diceSub-${subMode}`).className = 'dice-sub-btn py-2.5 px-2 rounded-xl text-xs sm:text-sm font-extrabold transition cursor-pointer bg-amber-500 text-slate-950 shadow';
+
+            // Toggle Visual Stages & Control Panels
+            document.getElementById('diceStageSingle').classList.toggle('hidden', subMode !== 'single');
+            document.getElementById('diceStageDouble').classList.toggle('hidden', subMode !== 'double');
+            document.getElementById('diceStageD100').classList.toggle('hidden', subMode !== 'd100');
+
+            document.getElementById('controls-dice-single').classList.toggle('hidden', subMode !== 'single');
+            document.getElementById('controls-dice-double').classList.toggle('hidden', subMode !== 'double');
+            document.getElementById('controls-dice-d100').classList.toggle('hidden', subMode !== 'd100');
+
+            document.getElementById('resultBanner').classList.add('hidden');
+            updatePotentialWin();
+        }
+
+        function selectSingleDiceBet(mode, exactNum) {
+            if (state.isRolling) return;
+            playSound('click');
+            state.singleDiceMode = mode;
+            if (exactNum !== null) state.singleDiceExact = exactNum;
+
+            // Reset all single dice buttons
+            ['low', 'high'].forEach(key => {
+                const el = document.getElementById(`btnSingle-${key}`);
+                el.className = 'single-dice-btn p-3.5 rounded-2xl border-2 border-slate-800 bg-slate-950/60 hover:border-slate-700 text-slate-300 flex flex-col items-center justify-center transition cursor-pointer';
+                el.querySelector('span').classList.remove('text-amber-400');
+            });
+            for (let i = 1; i <= 6; i++) {
+                const el = document.getElementById(`btnSingleExact-${i}`);
+                el.className = 'single-dice-btn py-3 rounded-xl border-2 border-slate-800 bg-slate-950/60 hover:border-slate-700 text-slate-200 font-black text-lg transition cursor-pointer';
+            }
+
+            if (mode === 'low' || mode === 'high') {
+                const active = document.getElementById(`btnSingle-${mode}`);
+                active.className = 'single-dice-btn p-3.5 rounded-2xl border-2 border-amber-500 bg-amber-500/15 text-white flex flex-col items-center justify-center transition cursor-pointer';
+                active.querySelector('span').classList.add('text-amber-400');
+            } else {
+                const active = document.getElementById(`btnSingleExact-${exactNum}`);
+                active.className = 'single-dice-btn py-3 rounded-xl border-2 border-amber-500 bg-amber-500/20 text-amber-400 font-black text-lg transition cursor-pointer';
+            }
+
+            updatePotentialWin();
+        }
+
+        function buildDoubleDiceGrid() {
+            const grid = document.getElementById('doubleSumGrid');
+            grid.innerHTML = '';
+            for (let sum = 2; sum <= 12; sum++) {
+                const mult = DOUBLE_SUM_MULTIPLIERS[sum];
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.id = `btnDoubleExact-${sum}`;
+                btn.onclick = () => selectDoubleDiceBet('exact', sum);
+                btn.className = 'double-dice-btn p-2.5 rounded-xl border-2 border-slate-800 bg-slate-950/60 hover:border-slate-700 text-slate-200 flex flex-col items-center transition cursor-pointer';
+                btn.innerHTML = `
+                    <span class="text-base font-black">${sum}</span>
+                    <span class="text-[10px] font-bold text-emerald-400">${mult}x</span>
+                `;
+                grid.appendChild(btn);
+            }
+        }
+
+        function selectDoubleDiceBet(mode, exactSum) {
+            if (state.isRolling) return;
+            playSound('click');
+            state.doubleDiceMode = mode;
+            if (exactSum !== null) state.doubleDiceExact = exactSum;
+
+            ['low', 'lucky7', 'high'].forEach(key => {
+                const el = document.getElementById(`btnDouble-${key}`);
+                el.className = 'double-dice-btn p-3 rounded-2xl border-2 border-slate-800 bg-slate-950/60 hover:border-slate-700 text-slate-300 flex flex-col items-center transition cursor-pointer';
+                el.querySelector('span').classList.remove('text-amber-400');
+            });
+
+            for (let s = 2; s <= 12; s++) {
+                const el = document.getElementById(`btnDoubleExact-${s}`);
+                if (el) {
+                    el.className = 'double-dice-btn p-2.5 rounded-xl border-2 border-slate-800 bg-slate-950/60 hover:border-slate-700 text-slate-200 flex flex-col items-center transition cursor-pointer';
+                }
+            }
+
+            if (mode !== 'exact') {
+                const active = document.getElementById(`btnDouble-${mode}`);
+                active.className = 'double-dice-btn p-3 rounded-2xl border-2 border-amber-500 bg-amber-500/15 text-white flex flex-col items-center transition cursor-pointer';
+                active.querySelector('span').classList.add('text-amber-400');
+            } else {
+                const active = document.getElementById(`btnDoubleExact-${exactSum}`);
+                if (active) {
+                    active.className = 'double-dice-btn p-2.5 rounded-xl border-2 border-amber-500 bg-amber-500/20 text-amber-400 flex flex-col items-center transition cursor-pointer';
+                }
+            }
+
+            updatePotentialWin();
+        }
+
+        function clearD100PresetHighlight() {
+            document.querySelectorAll('.d100-preset-btn').forEach(btn => {
+                btn.className = 'd100-preset-btn p-2.5 rounded-xl border-2 border-slate-800 bg-slate-950/60 hover:border-slate-700 text-slate-200 flex flex-col items-center transition cursor-pointer';
+            });
+            const p5 = document.getElementById('d100Preset-p5');
+            if (p5) p5.classList.add('col-span-2', 'sm:col-span-1');
+        }
+
+        function setD100Preset(direction, target, presetId) {
+            if (state.isRolling) return;
+            playSound('click');
+            state.d100Direction = direction;
+            state.d100Target = target;
+            document.getElementById('d100TargetSlider').value = target;
+
+            clearD100PresetHighlight();
+            const active = document.getElementById(`d100Preset-${presetId}`);
+            if (active) {
+                active.className = 'd100-preset-btn p-2.5 rounded-xl border-2 border-amber-500 bg-amber-500/15 text-amber-400 flex flex-col items-center transition cursor-pointer';
+                if (presetId === 'p5') active.classList.add('col-span-2', 'sm:col-span-1');
+            }
+
+            syncD100ControlsUI();
+            updatePotentialWin();
+        }
+
+        function setD100Direction(direction) {
+            if (state.isRolling) return;
+            playSound('click');
+            state.d100Direction = direction;
+            clearD100PresetHighlight();
+            syncD100ControlsUI();
+            updatePotentialWin();
+        }
+
+        function onD100SliderChange() {
+            state.d100Target = parseInt(document.getElementById('d100TargetSlider').value, 10) || 50;
+            clearD100PresetHighlight();
+            syncD100ControlsUI();
+            updatePotentialWin();
+        }
+
+        function getD100Stats() {
+            const target = state.d100Target;
+            let winCount = 0;
+            let rangeText = '';
+            if (state.d100Direction === 'under') {
+                winCount = Math.max(1, target - 1);
+                rangeText = `ከ ${target} በታች (1 - ${target - 1})`;
+            } else {
+                winCount = Math.max(1, 100 - target);
+                rangeText = `ከ ${target} በላይ (${target + 1} - 100)`;
+            }
+            const multiplier = Number((97 / winCount).toFixed(2));
+            return { winCount, rangeText, multiplier };
+        }
+
+        function syncD100ControlsUI() {
+            const underBtn = document.getElementById('btnD100Under');
+            const overBtn = document.getElementById('btnD100Over');
+            if (state.d100Direction === 'under') {
+                underBtn.className = 'px-3.5 py-1.5 rounded-xl text-xs font-black bg-amber-500 text-slate-950 transition cursor-pointer';
+                overBtn.className = 'px-3.5 py-1.5 rounded-xl text-xs font-black bg-slate-800 text-slate-300 hover:bg-slate-700 transition cursor-pointer';
+            } else {
+                overBtn.className = 'px-3.5 py-1.5 rounded-xl text-xs font-black bg-amber-500 text-slate-950 transition cursor-pointer';
+                underBtn.className = 'px-3.5 py-1.5 rounded-xl text-xs font-black bg-slate-800 text-slate-300 hover:bg-slate-700 transition cursor-pointer';
+            }
+            const stats = getD100Stats();
+            document.getElementById('d100RuleSummary').textContent = `${stats.rangeText} • እድል: ${stats.winCount}%`;
+        }
+
+        function selectCoinChoice(choice) {
+            if (state.isRolling) return;
+            playSound('click');
+            state.coinChoice = choice;
+            const headsBtn = document.getElementById('btnCoinHeads');
+            const tailsBtn = document.getElementById('btnCoinTails');
+
+            if (choice === 'heads') {
+                headsBtn.className = 'p-4 rounded-2xl border-2 border-amber-500 bg-amber-500/15 text-white flex items-center justify-center gap-3 transition cursor-pointer';
+                headsBtn.querySelector('i').className = 'ph-fill ph-crown text-2xl text-amber-400';
+                headsBtn.querySelector('span').className = 'text-base sm:text-lg font-black text-amber-400';
+
+                tailsBtn.className = 'p-4 rounded-2xl border-2 border-slate-800 bg-slate-950/60 hover:border-slate-700 text-slate-300 flex items-center justify-center gap-3 transition cursor-pointer';
+                tailsBtn.querySelector('i').className = 'ph-fill ph-sword text-2xl';
+                tailsBtn.querySelector('span').className = 'text-base sm:text-lg font-black';
+            } else {
+                tailsBtn.className = 'p-4 rounded-2xl border-2 border-amber-500 bg-amber-500/15 text-white flex items-center justify-center gap-3 transition cursor-pointer';
+                tailsBtn.querySelector('i').className = 'ph-fill ph-sword text-2xl text-amber-400';
+                tailsBtn.querySelector('span').className = 'text-base sm:text-lg font-black text-amber-400';
+
+                headsBtn.className = 'p-4 rounded-2xl border-2 border-slate-800 bg-slate-950/60 hover:border-slate-700 text-slate-300 flex items-center justify-center gap-3 transition cursor-pointer';
+                headsBtn.querySelector('i').className = 'ph-fill ph-crown text-2xl';
+                headsBtn.querySelector('span').className = 'text-base sm:text-lg font-black';
+            }
+        }
+
+        function setBetAmount(amount) {
+            if (state.isRolling) return;
+            playSound('click');
+            document.getElementById('betAmountInput').value = amount;
+            updatePotentialWin();
+        }
+
+        function setAllInBet() {
+            if (state.isRolling) return;
+            playSound('click');
+            const allIn = Math.floor(state.balance);
+            document.getElementById('betAmountInput').value = allIn > 0 ? allIn : 0;
+            updatePotentialWin();
+        }
+
+        function buildLuckyNumberGrid() {
+            const grid = document.getElementById('luckyNumberGrid');
+            grid.innerHTML = '';
+            for (let i = 1; i <= 20; i++) {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.id = `btnLucky-${i}`;
+                btn.textContent = i;
+                btn.onclick = () => selectLuckyNumber(i);
+                btn.className = i === state.luckyChoice
+                    ? 'lucky-num-btn py-3 rounded-xl border-2 border-amber-500 bg-amber-500/20 text-amber-400 text-base sm:text-lg font-black transition cursor-pointer'
+                    : 'lucky-num-btn py-3 rounded-xl border-2 border-slate-800 bg-slate-950/60 hover:border-slate-700 text-slate-300 text-base sm:text-lg font-black transition cursor-pointer';
+                grid.appendChild(btn);
+            }
+        }
+
+        function selectLuckyNumber(num) {
+            if (state.isRolling) return;
+            playSound('click');
+            state.luckyChoice = num;
+            for (let i = 1; i <= 20; i++) {
+                const btn = document.getElementById(`btnLucky-${i}`);
+                if (!btn) continue;
+                if (i === num) {
+                    btn.className = 'lucky-num-btn py-3 rounded-xl border-2 border-amber-500 bg-amber-500/20 text-amber-400 text-base sm:text-lg font-black transition cursor-pointer';
+                } else {
+                    btn.className = 'lucky-num-btn py-3 rounded-xl border-2 border-slate-800 bg-slate-950/60 hover:border-slate-700 text-slate-300 text-base sm:text-lg font-black transition cursor-pointer';
+                }
+            }
+        }
+
+        // --- Bet Amount Controls ---
+        function getCurrentMultiplier() {
+            if (state.activeGame === 'coin') return 2;
+            if (state.activeGame === 'lucky') return 18;
+
+            // Dice modes
+            if (state.diceSubMode === 'single') {
+                return state.singleDiceMode === 'exact' ? 5.5 : 2;
+            }
+            if (state.diceSubMode === 'double') {
+                if (state.doubleDiceMode === 'exact') {
+                    return DOUBLE_SUM_MULTIPLIERS[state.doubleDiceExact] || 5;
+                }
+                if (state.doubleDiceMode === 'lucky7') return 5;
+                return 2.2;
+            }
+            if (state.diceSubMode === 'd100') {
+                return getD100Stats().multiplier;
+            }
+            return 2;
+        }
+
+        function updatePotentialWin() {
+            const bet = parseFloat(document.getElementById('betAmountInput').value) || 0;
+            const multiplier = getCurrentMultiplier();
+            const potential = bet * multiplier;
+
+            document.getElementById('potentialWinHint').textContent = `ሊያሸንፉ የሚችሉት: ${formatETB(potential)} (${multiplier}x)`;
+            const badge = document.getElementById('diceCurrentMultiplierBadge');
+            if (badge) badge.textContent = `ሽልማት: ${multiplier}x`;
+
+            const actionLabels = {
+                dice: `ዳይሱን ወርውር (${bet > 0 ? bet : 0} ብር)`,
+                coin: `ሳንቲሙን ገልብጥ (${bet > 0 ? bet : 0} ብር)`,
+                lucky: `እድልህን ሞክር (${bet > 0 ? bet : 0} ብር)`
+            };
+            document.getElementById('playBtnText').textContent = actionLabels[state.activeGame];
+        }
+
+        // --- Render 3D-style Dice Pips ---
+        function renderDiceFace(value, targetId = 'diceVisual') {
+            const visual = document.getElementById(targetId);
+            if (!visual) return;
+            // 3x3 grid positions (1 to 9)
+            const layouts = {
+                1: [5],
+                2: [1, 9],
+                3: [1, 5, 9],
+                4: [1, 3, 7, 9],
+                5: [1, 3, 5, 7, 9],
+                6: [1, 3, 4, 6, 7, 9]
+            };
+            const activeCells = layouts[value] || [5];
+            let html = '';
+            for (let cell = 1; cell <= 9; cell++) {
+                if (activeCells.includes(cell)) {
+                    const isRed = (value === 1 || (value === 5 && cell === 5));
+                    html += `<div class="pip ${isRed ? 'red' : ''}"></div>`;
+                } else {
+                    html += `<div></div>`;
+                }
+            }
+            visual.innerHTML = html;
+        }
+
+        // --- Core Play Execution ---
+        function playCurrentGame() {
+            if (state.isRolling) return;
+
+            const bet = parseFloat(document.getElementById('betAmountInput').value);
+            if (isNaN(bet) || bet <= 0) {
+                showToast('እባክዎ ትክክለኛ የመወራረጃ መጠን ያስገቡ!', 'error');
+                return;
+            }
+            if (bet > state.balance) {
+                showToast('በቂ ቀሪ ሂሳብ የለዎትም! ከላይ "ሂሳብ ሙላ" የሚለውን ይጫኑ።', 'error');
+                return;
+            }
+
+            // Deduct stake immediately
+            state.balance -= bet;
+            state.isRolling = true;
+            updateBalanceUI();
+            playSound('roll');
+
+            const playBtn = document.getElementById('playActionBtn');
+            playBtn.disabled = true;
+            playBtn.classList.add('opacity-60', 'cursor-not-allowed');
+            document.getElementById('resultBanner').classList.add('hidden');
+
+            if (state.activeGame === 'dice') {
+                runDiceRound(bet);
+            } else if (state.activeGame === 'coin') {
+                runCoinRound(bet);
+            } else {
+                runLuckyRound(bet);
+            }
+        }
+
+        function runDiceRound(bet) {
+            if (state.diceSubMode === 'double') {
+                runDoubleDiceRound(bet);
+                return;
+            }
+            if (state.diceSubMode === 'd100') {
+                runD100DiceRound(bet);
+                return;
+            }
+
+            const diceEl = document.getElementById('diceVisual');
+            const statusEl = document.getElementById('diceStatusLabel');
+            diceEl.classList.remove('animate-dice-roll');
+            void diceEl.offsetWidth;
+            diceEl.classList.add('animate-dice-roll');
+            statusEl.textContent = 'ዳይሱ እየተሽከረከረ ነው...';
+
+            const interval = setInterval(() => {
+                renderDiceFace(Math.floor(Math.random() * 6) + 1, 'diceVisual');
+            }, 90);
+
+            setTimeout(() => {
+                clearInterval(interval);
+                const rolled = Math.floor(Math.random() * 6) + 1;
+                renderDiceFace(rolled, 'diceVisual');
+
+                let won = false;
+                let choiceDesc = '';
+                const mult = getCurrentMultiplier();
+
+                if (state.singleDiceMode === 'low') {
+                    won = rolled <= 3;
+                    choiceDesc = 'ዝቅተኛ (1-3)';
+                } else if (state.singleDiceMode === 'high') {
+                    won = rolled >= 4;
+                    choiceDesc = 'ከፍተኛ (4-6)';
+                } else {
+                    won = rolled === state.singleDiceExact;
+                    choiceDesc = `ቁጥር ${state.singleDiceExact}`;
+                }
+
+                const payout = won ? Number((bet * mult).toFixed(2)) : 0;
+                statusEl.textContent = `የወጣው ቁጥር: ${rolled} (ምርጫዎ: ${choiceDesc})`;
+
+                finishRound({
+                    gameName: 'ባለ 1 ዳይስ (1-6)',
+                    bet: bet,
+                    resultText: `ቁጥር ${rolled} ወጣ • ምርጫ: ${choiceDesc}`,
+                    won: won,
+                    payout: payout
+                });
+            }, 850);
+        }
+
+        function runDoubleDiceRound(bet) {
+            const d1 = document.getElementById('diceVisual1');
+            const d2 = document.getElementById('diceVisual2');
+            const sumBadge = document.getElementById('doubleDiceSumBadge');
+            const statusEl = document.getElementById('diceStatusLabel');
+
+            [d1, d2].forEach(el => {
+                el.classList.remove('animate-dice-roll');
+                void el.offsetWidth;
+                el.classList.add('animate-dice-roll');
+            });
+            statusEl.textContent = 'ሁለቱ ዳይሶች እየተሽከረከሩ ነው...';
+
+            const interval = setInterval(() => {
+                const r1 = Math.floor(Math.random() * 6) + 1;
+                const r2 = Math.floor(Math.random() * 6) + 1;
+                renderDiceFace(r1, 'diceVisual1');
+                renderDiceFace(r2, 'diceVisual2');
+                sumBadge.textContent = `ድምር: ${r1 + r2}`;
+            }, 90);
+
+            setTimeout(() => {
+                clearInterval(interval);
+                const r1 = Math.floor(Math.random() * 6) + 1;
+                const r2 = Math.floor(Math.random() * 6) + 1;
+                const sum = r1 + r2;
+
+                renderDiceFace(r1, 'diceVisual1');
+                renderDiceFace(r2, 'diceVisual2');
+                sumBadge.textContent = `ድምር: ${sum} (${r1} + ${r2})`;
+
+                let won = false;
+                let choiceDesc = '';
+                const mult = getCurrentMultiplier();
+
+                if (state.doubleDiceMode === 'low') {
+                    won = sum >= 2 && sum <= 6;
+                    choiceDesc = 'ዝቅተኛ (2-6)';
+                } else if (state.doubleDiceMode === 'lucky7') {
+                    won = sum === 7;
+                    choiceDesc = 'እድለኛ 7';
+                } else if (state.doubleDiceMode === 'high') {
+                    won = sum >= 8 && sum <= 12;
+                    choiceDesc = 'ከፍተኛ (8-12)';
+                } else {
+                    won = sum === state.doubleDiceExact;
+                    choiceDesc = `ድምር ${state.doubleDiceExact}`;
+                }
+
+                const payout = won ? Number((bet * mult).toFixed(2)) : 0;
+                statusEl.textContent = `ውጤት: ${r1} + ${r2} = ${sum} (ምርጫዎ: ${choiceDesc})`;
+
+                finishRound({
+                    gameName: 'ባለ 2 ዳይስ (2-12)',
+                    bet: bet,
+                    resultText: `ድምር ${sum} (${r1}+${r2}) • ምርጫ: ${choiceDesc}`,
+                    won: won,
+                    payout: payout
+                });
+            }, 900);
+        }
+
+        function runD100DiceRound(bet) {
+            const numDisplay = document.getElementById('d100NumberDisplay');
+            const statusEl = document.getElementById('diceStatusLabel');
+            const stats = getD100Stats();
+
+            statusEl.textContent = 'ባለ 100 ዳይስ ቁጥር እየወጣ ነው...';
+
+            const interval = setInterval(() => {
+                numDisplay.textContent = Math.floor(Math.random() * 100) + 1;
+            }, 55);
+
+            setTimeout(() => {
+                clearInterval(interval);
+                const rolled = Math.floor(Math.random() * 100) + 1;
+                numDisplay.textContent = rolled;
+
+                const won = state.d100Direction === 'under'
+                    ? rolled < state.d100Target
+                    : rolled > state.d100Target;
+
+                const payout = won ? Number((bet * stats.multiplier).toFixed(2)) : 0;
+                statusEl.textContent = `የወጣው ቁጥር: ${rolled} (ምርጫዎ: ${stats.rangeText})`;
+
+                finishRound({
+                    gameName: 'ባለ 100 ዳይስ (1-100)',
+                    bet: bet,
+                    resultText: `ቁጥር ${rolled} • ${stats.rangeText}`,
+                    won: won,
+                    payout: payout
+                });
+            }, 900);
+        }
+
+        function runCoinRound(bet) {
+            const coinEl = document.getElementById('coinVisual');
+            const iconEl = document.getElementById('coinIcon');
+            const textEl = document.getElementById('coinFaceText');
+            const statusEl = document.getElementById('coinStatusLabel');
+
+            coinEl.classList.remove('animate-coin-flip');
+            void coinEl.offsetWidth;
+            coinEl.classList.add('animate-coin-flip');
+            statusEl.textContent = 'ሳንቲሙ በአየር ላይ እየተገለበጠ ነው...';
+
+            setTimeout(() => {
+                const outcome = Math.random() < 0.5 ? 'heads' : 'tails';
+                const won = outcome === state.coinChoice;
+                const payout = won ? bet * 2 : 0;
+
+                if (outcome === 'heads') {
+                    iconEl.className = 'ph-fill ph-crown text-4xl';
+                    textEl.textContent = 'ዘውድ';
+                    statusEl.textContent = 'ውጤት: ዘውድ (Heads)';
+                } else {
+                    iconEl.className = 'ph-fill ph-sword text-4xl';
+                    textEl.textContent = 'ጎራዴ';
+                    statusEl.textContent = 'ውጤት: ጎራዴ (Tails)';
+                }
+
+                finishRound({
+                    gameName: 'የሳንቲም ውርርድ',
+                    bet: bet,
+                    resultText: `${outcome === 'heads' ? 'ዘውድ' : 'ጎራዴ'} ወጣ`,
+                    won: won,
+                    payout: payout
+                });
+            }, 950);
+        }
+
+        function runLuckyRound(bet) {
+            const numDisplay = document.getElementById('luckyNumberDisplay');
+            const statusEl = document.getElementById('luckyStatusLabel');
+            statusEl.textContent = 'ከ 1 እስከ 20 የእድል ቁጥሩ እየተመረጠ ነው...';
+
+            let ticks = 0;
+            const interval = setInterval(() => {
+                ticks++;
+                numDisplay.textContent = (ticks % 20) + 1;
+            }, 60);
+
+            setTimeout(() => {
+                clearInterval(interval);
+                const winningNum = Math.floor(Math.random() * 20) + 1;
+                numDisplay.textContent = winningNum;
+
+                const won = winningNum === state.luckyChoice;
+                const payout = won ? bet * 18 : 0;
+
+                statusEl.textContent = `የወጣው የእድል ቁጥር: ${winningNum} (የእርስዎ ምርጫ: ${state.luckyChoice})`;
+                finishRound({
+                    gameName: 'የእድል ቁጥር (1-20)',
+                    bet: bet,
+                    resultText: `ቁጥር ${winningNum} (ምርጫ: ${state.luckyChoice})`,
+                    won: won,
+                    payout: payout
+                });
+            }, 950);
+        }
+
+        function finishRound({ gameName, bet, resultText, won, payout }) {
+            state.isRolling = false;
+            const playBtn = document.getElementById('playActionBtn');
+            playBtn.disabled = false;
+            playBtn.classList.remove('opacity-60', 'cursor-not-allowed');
+
+            if (won) {
+                state.balance += payout;
+                playSound('win');
+            } else {
+                playSound('lose');
+            }
+
+            // Show Result Banner
+            const banner = document.getElementById('resultBanner');
+            const title = document.getElementById('resultBannerTitle');
+            const sub = document.getElementById('resultBannerSub');
+
+            banner.classList.remove('hidden', 'bg-emerald-500/15', 'border-emerald-500/40', 'bg-rose-500/15', 'border-rose-500/40', 'animate-pop-win');
+            void banner.offsetWidth;
+            banner.classList.add('animate-pop-win');
+
+            if (won) {
+                banner.classList.add('bg-emerald-500/15', 'border-emerald-500/40');
+                title.className = 'text-lg sm:text-xl font-black text-emerald-400';
+                title.textContent = `🎉 እንኳን ደስ አለዎት! ${formatETB(payout)} አሸንፈዋል!`;
+                sub.className = 'text-xs sm:text-sm mt-1 font-medium text-emerald-200';
+                sub.textContent = `${gameName} • ${resultText}`;
+            } else {
+                banner.classList.add('bg-rose-500/15', 'border-rose-500/40');
+                title.className = 'text-lg sm:text-xl font-black text-rose-400';
+                title.textContent = `😔 በዚህ ዙር አልተሳካም (-${formatETB(bet)})`;
+                sub.className = 'text-xs sm:text-sm mt-1 font-medium text-rose-200';
+                sub.textContent = `${gameName} • ${resultText} — እንደገና ይሞክሩ!`;
+            }
+
+            // Add to History
+            state.history.unshift({
+                id: Date.now(),
+                gameName,
+                bet,
+                resultText,
+                won,
+                payout
+            });
+
+            saveState();
+            updateBalanceUI();
+            renderHistory();
+        }
+
+        // --- History Table Rendering ---
+        function renderHistory() {
+            const tbody = document.getElementById('historyTableBody');
+            const emptyEl = document.getElementById('emptyHistoryState');
+            tbody.innerHTML = '';
+
+            if (state.history.length === 0) {
+                emptyEl.classList.remove('hidden');
+                return;
+            }
+            emptyEl.classList.add('hidden');
+
+            state.history.slice(0, 15).forEach(item => {
+                const tr = document.createElement('tr');
+                tr.className = 'hover:bg-slate-800/40 transition';
+                tr.innerHTML = `
+                    <td class="py-3 px-3 font-bold text-slate-200 whitespace-nowrap">${item.gameName}</td>
+                    <td class="py-3 px-3 text-slate-300 whitespace-nowrap">${formatETB(item.bet)}</td>
+                    <td class="py-3 px-3 text-slate-400">${item.resultText}</td>
+                    <td class="py-3 px-3 text-right font-extrabold whitespace-nowrap ${item.won ? 'text-emerald-400' : 'text-rose-400'}">
+                        ${item.won ? '+' + formatETB(item.payout) : '-' + formatETB(item.bet)}
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function clearHistory() {
+            if (state.history.length === 0) return;
+            playSound('click');
+            state.history = [];
+            saveState();
+            renderHistory();
+            showToast('የጨዋታ ታሪክ ጸድቷል።', 'info');
+        }
+
+        // --- Custom Toast Notification ---
+        let toastTimer = null;
+        function showToast(message, type = 'info') {
+            const banner = document.getElementById('toastBanner');
+            const textEl = document.getElementById('toastText');
+            const iconEl = document.getElementById('toastIcon');
+
+            textEl.textContent = message;
+            if (type === 'win') {
+                iconEl.className = 'ph-fill ph-check-circle text-2xl text-emerald-400';
+            } else if (type === 'error') {
+                iconEl.className = 'ph-fill ph-warning-circle text-2xl text-rose-400';
+            } else {
+                iconEl.className = 'ph-fill ph-info text-2xl text-amber-400';
+            }
+
+            banner.classList.remove('translate-y-28', 'opacity-0');
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => {
+                banner.classList.add('translate-y-28', 'opacity-0');
+            }, 3000);
+        }
+
+        // --- Initialize on Window Load ---
+        window.addEventListener('DOMContentLoaded', () => {
+            loadState();
+            buildDoubleDiceGrid();
+            buildLuckyNumberGrid();
+            renderDiceFace(4, 'diceVisual1');
+            renderDiceFace(3, 'diceVisual2');
+            syncD100ControlsUI();
+            updateBalanceUI();
+            updatePotentialWin();
+            renderHistory();
+            if (!state.soundEnabled) {
+                document.getElementById('soundIcon').className = 'ph-fill ph-speaker-slash text-xl text-slate-500';
+            }
+        });
+    </script>
+</body>
+</html>

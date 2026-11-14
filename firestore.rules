@@ -1,0 +1,789 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net: Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Primitive Helpers ---
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidTxId(txId) {
+      return txId is string && txId.size() >= 6 && txId.size() <= 24 && txId.matches('^[A-Z0-9]+$');
+    }
+
+    function isValidPhone(phone) {
+      return phone is string && phone.size() == 10 && phone.matches('^0[79][0-9]{8}$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn();
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isAdmin() {
+      return isSignedIn()
+        && request.auth.token.email_verified == true
+        && (
+          request.auth.token.email == 'yirsawbiniyam@gmail.com' ||
+          exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+        );
+    }
+
+    // --- Entity Validation Blueprints ---
+    function isValidTelebirrSettings(data) {
+      return data.keys().hasAll(['depositPhone', 'withdrawalPhone', 'accountName', 'minDeposit', 'minWithdraw', 'houseWinRate', 'updatedBy', 'updatedAt'])
+        && data.keys().hasOnly(['depositPhone', 'withdrawalPhone', 'accountName', 'minDeposit', 'minWithdraw', 'houseWinRate', 'updatedBy', 'updatedAt'])
+        && isValidPhone(data.depositPhone)
+        && isValidPhone(data.withdrawalPhone)
+        && data.accountName is string && data.accountName.size() >= 2 && data.accountName.size() <= 80
+        && data.minDeposit is number && data.minDeposit == 100
+        && data.minWithdraw is number && data.minWithdraw == 500
+        && data.houseWinRate is number && data.houseWinRate >= 0.1 && data.houseWinRate <= 0.45
+        && data.updatedBy is string && data.updatedBy == request.auth.uid && data.updatedBy.size() <= 128
+        && data.updatedAt == request.time;
+    }
+
+    function isValidBrandingSettings(data) {
+      return data.keys().hasAll(['logoDataUrl', 'updatedBy', 'updatedAt'])
+        && data.keys().hasOnly(['logoDataUrl', 'updatedBy', 'updatedAt'])
+        && data.logoDataUrl is string && data.logoDataUrl.size() <= 200000
+        && data.updatedBy is string && data.updatedBy == request.auth.uid && data.updatedBy.size() <= 128
+        && data.updatedAt == request.time;
+    }
+
+    function isValidGameConfig(data) {
+      return data.keys().hasAll([
+          'minBet', 'maxBet', 'houseWinRate',
+          'singleDiceRangeOdds', 'singleDiceExactOdds',
+          'doubleDiceRangeOdds', 'doubleDiceLucky7Odds',
+          'coinOdds', 'luckyOdds', 'footballOddsScale', 'footballMaxOdds',
+          'updatedBy', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'minBet', 'maxBet', 'houseWinRate',
+          'singleDiceRangeOdds', 'singleDiceExactOdds',
+          'doubleDiceRangeOdds', 'doubleDiceLucky7Odds',
+          'coinOdds', 'luckyOdds', 'footballOddsScale', 'footballMaxOdds',
+          'updatedBy', 'updatedAt'
+        ])
+        && data.minBet is number && data.minBet >= 1 && data.minBet <= 50000
+        && data.maxBet is number && data.maxBet >= data.minBet && data.maxBet <= 500000
+        && data.houseWinRate is number && data.houseWinRate >= 0.05 && data.houseWinRate <= 0.50
+        && data.singleDiceRangeOdds is number && data.singleDiceRangeOdds >= 1.2 && data.singleDiceRangeOdds <= 5.0
+        && data.singleDiceExactOdds is number && data.singleDiceExactOdds >= 2.0 && data.singleDiceExactOdds <= 12.0
+        && data.doubleDiceRangeOdds is number && data.doubleDiceRangeOdds >= 1.2 && data.doubleDiceRangeOdds <= 5.0
+        && data.doubleDiceLucky7Odds is number && data.doubleDiceLucky7Odds >= 2.0 && data.doubleDiceLucky7Odds <= 12.0
+        && data.coinOdds is number && data.coinOdds >= 1.2 && data.coinOdds <= 4.0
+        && data.luckyOdds is number && data.luckyOdds >= 5.0 && data.luckyOdds <= 35.0
+        && data.footballOddsScale is number && data.footballOddsScale >= 0.7 && data.footballOddsScale <= 1.5
+        && data.footballMaxOdds is number && data.footballMaxOdds >= 5 && data.footballMaxOdds <= 500
+        && data.updatedBy is string && data.updatedBy == request.auth.uid && data.updatedBy.size() <= 128
+        && data.updatedAt == request.time;
+    }
+
+    function isValidAdminRecord(data, uid) {
+      return data.keys().hasAll(['uid', 'email', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'email', 'createdAt'])
+        && data.uid is string && data.uid == uid && data.uid.size() <= 128
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 150
+        && data.createdAt == request.time;
+    }
+
+    function isValidUserWallet(data, userId) {
+      return data.keys().hasAll(['uid', 'displayName', 'balance', 'hasDeposited', 'totalDeposited', 'totalWithdrawn', 'lastActionType', 'lastActionRef', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'displayName', 'balance', 'hasDeposited', 'totalDeposited', 'totalWithdrawn', 'lastActionType', 'lastActionRef', 'createdAt', 'updatedAt'])
+        && data.uid is string && data.uid == userId && data.uid.size() <= 128
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80
+        && data.balance is number && data.balance >= 0 && data.balance <= 10000000
+        && data.hasDeposited is bool
+        && data.totalDeposited is number && data.totalDeposited >= 0
+        && data.totalWithdrawn is number && data.totalWithdrawn >= 0
+        && data.lastActionType in ['init', 'deposit', 'bet', 'withdraw', 'refund', 'bonus', 'football_place', 'football_settle']
+        && data.lastActionRef is string && data.lastActionRef.size() >= 1 && data.lastActionRef.size() <= 128
+        && data.updatedAt == request.time;
+    }
+
+    function expectedTodayKey() {
+      return string(request.time.year()) + '_' + string(request.time.month()) + '_' + string(request.time.day());
+    }
+
+    function expectedDailyBonusId(uid) {
+      return uid + '_' + expectedTodayKey();
+    }
+
+    function isValidDailyBonus(data, claimId) {
+      return data.keys().hasAll(['id', 'uid', 'dayKey', 'amount', 'createdAt'])
+        && data.keys().hasOnly(['id', 'uid', 'dayKey', 'amount', 'createdAt'])
+        && isValidId(data.id) && data.id == claimId
+        && data.uid is string && data.uid == request.auth.uid && data.uid.size() <= 128
+        && data.dayKey is string && data.dayKey == expectedTodayKey() && data.dayKey.size() >= 8 && data.dayKey.size() <= 10
+        && data.id == expectedDailyBonusId(request.auth.uid)
+        && data.amount is number && data.amount == 10
+        && data.createdAt == request.time;
+    }
+
+    function isValidUserPrivateInfo(data, userId) {
+      return data.keys().hasAll(['uid', 'email', 'telebirrPhone', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'telebirrPhone', 'updatedAt'])
+        && data.uid is string && data.uid == userId && data.uid.size() <= 128
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 150
+        && isValidPhone(data.telebirrPhone)
+        && data.updatedAt == request.time;
+    }
+
+    function isValidUsedTxId(data, txId) {
+      return data.keys().hasAll(['txId', 'uid', 'amount', 'createdAt'])
+        && data.keys().hasOnly(['txId', 'uid', 'amount', 'createdAt'])
+        && isValidTxId(data.txId) && data.txId == txId
+        && data.uid is string && data.uid == request.auth.uid && data.uid.size() <= 128
+        && data.amount is number && data.amount >= 100 && data.amount <= 500000
+        && data.createdAt == request.time;
+    }
+
+    function isValidDeposit(data, depositId) {
+      return data.keys().hasAll(['id', 'uid', 'playerName', 'playerPhone', 'systemPhone', 'txId', 'amount', 'status', 'verifiedMessage', 'createdAt'])
+        && data.keys().hasOnly(['id', 'uid', 'playerName', 'playerPhone', 'systemPhone', 'txId', 'amount', 'status', 'verifiedMessage', 'createdAt'])
+        && isValidTxId(data.id) && data.id == depositId
+        && isValidTxId(data.txId) && data.txId == depositId
+        && data.uid is string && data.uid == request.auth.uid && data.uid.size() <= 128
+        && data.playerName is string && data.playerName.size() >= 1 && data.playerName.size() <= 80
+        && isValidPhone(data.playerPhone)
+        && isValidPhone(data.systemPhone)
+        && data.amount is number && data.amount >= 100 && data.amount <= 500000
+        && data.status == 'verified'
+        && data.verifiedMessage is string && data.verifiedMessage.size() >= 2 && data.verifiedMessage.size() <= 120
+        && data.createdAt == request.time;
+    }
+
+    function isValidWithdrawal(data, withdrawalId) {
+      return data.keys().hasAll(['id', 'uid', 'playerName', 'playerPhone', 'sourceSystemPhone', 'amount', 'status', 'systemVerified', 'systemVerifiedText', 'adminPinConfirmed', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'uid', 'playerName', 'playerPhone', 'sourceSystemPhone', 'amount', 'status', 'systemVerified', 'systemVerifiedText', 'adminPinConfirmed', 'processedBy', 'createdAt', 'updatedAt'])
+        && isValidId(data.id) && data.id == withdrawalId
+        && data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128
+        && data.playerName is string && data.playerName.size() >= 1 && data.playerName.size() <= 80
+        && isValidPhone(data.playerPhone)
+        && isValidPhone(data.sourceSystemPhone)
+        && data.amount is number && data.amount >= 500 && data.amount <= 500000
+        && data.status in ['pending', 'completed', 'rejected']
+        && data.systemVerified is bool
+        && data.systemVerifiedText is string && data.systemVerifiedText.size() >= 2 && data.systemVerifiedText.size() <= 120
+        && data.adminPinConfirmed is bool
+        && (!('processedBy' in data) || (data.processedBy is string && data.processedBy.size() <= 128))
+        && data.updatedAt == request.time;
+    }
+
+    function isValidBet(data, betId) {
+      return data.keys().hasAll(['id', 'uid', 'gameType', 'gameName', 'betAmount', 'multiplier', 'choiceText', 'resultText', 'won', 'payout', 'createdAt'])
+        && data.keys().hasOnly(['id', 'uid', 'gameType', 'gameName', 'betAmount', 'multiplier', 'choiceText', 'resultText', 'won', 'payout', 'createdAt'])
+        && isValidId(data.id) && data.id == betId
+        && data.uid is string && data.uid == request.auth.uid && data.uid.size() <= 128
+        && data.gameType in ['dice_single', 'dice_double', 'dice_d100', 'coin', 'lucky', 'football']
+        && data.gameName is string && data.gameName.size() >= 1 && data.gameName.size() <= 80
+        && data.betAmount is number && data.betAmount >= 1 && data.betAmount <= 500000
+        && data.multiplier is number && data.multiplier >= 1 && data.multiplier <= 500
+        && data.choiceText is string && data.choiceText.size() >= 1 && data.choiceText.size() <= 200
+        && data.resultText is string && data.resultText.size() >= 1 && data.resultText.size() <= 250
+        && data.won is bool
+        && data.payout is number && data.payout >= 0 && data.payout <= data.betAmount * 500
+        && ((data.won == true && data.payout > 0) || (data.won == false && data.payout == 0))
+        && data.createdAt == request.time;
+    }
+
+    function isValidLedgerEntry(data, entryId) {
+      return data.keys().hasAll(['id', 'uid', 'playerName', 'playerPhone', 'type', 'category', 'amount', 'referenceId', 'description', 'createdAt'])
+        && data.keys().hasOnly(['id', 'uid', 'playerName', 'playerPhone', 'type', 'category', 'amount', 'referenceId', 'description', 'createdAt'])
+        && isValidId(data.id) && data.id == entryId
+        && data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128
+        && data.playerName is string && data.playerName.size() >= 1 && data.playerName.size() <= 80
+        && isValidPhone(data.playerPhone)
+        && data.type in ['income', 'expense']
+        && data.category in ['deposit', 'withdrawal']
+        && data.amount is number && data.amount >= 1 && data.amount <= 500000
+        && data.referenceId is string && data.referenceId.size() >= 1 && data.referenceId.size() <= 128
+        && data.description is string && data.description.size() >= 1 && data.description.size() <= 180
+        && data.createdAt == request.time;
+    }
+
+    function isValidRecentWinner(data, winnerId) {
+      return data.keys().hasAll(['id', 'uid', 'playerMask', 'gameType', 'gameName', 'multiplier', 'payout', 'createdAt'])
+        && data.keys().hasOnly(['id', 'uid', 'playerMask', 'gameType', 'gameName', 'multiplier', 'payout', 'createdAt'])
+        && isValidId(data.id) && data.id == winnerId
+        && data.uid is string && data.uid == request.auth.uid && data.uid.size() <= 128
+        && data.playerMask is string && data.playerMask.size() >= 2 && data.playerMask.size() <= 32
+        && data.gameType in ['dice_single', 'dice_double', 'dice_d100', 'coin', 'lucky', 'football']
+        && data.gameName is string && data.gameName.size() >= 1 && data.gameName.size() <= 80
+        && data.multiplier is number && data.multiplier >= 1 && data.multiplier <= 500
+        && data.payout is number && data.payout > 0 && data.payout <= 250000000
+        && data.createdAt == request.time;
+    }
+
+    function isValidFootballTicket(data, ticketId) {
+      return data.keys().hasAll([
+          'id', 'uid', 'betAmount', 'totalOdds', 'potentialPayout',
+          'picksCount', 'choiceText', 'picks', 'currentMinute',
+          'cashoutOffer', 'cashoutEligible', 'status', 'payout',
+          'resultText', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'uid', 'betAmount', 'totalOdds', 'potentialPayout',
+          'picksCount', 'choiceText', 'picks', 'currentMinute',
+          'cashoutOffer', 'cashoutEligible', 'status', 'payout',
+          'resultText', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id) && data.id == ticketId
+        && data.uid is string && data.uid == request.auth.uid && data.uid.size() <= 128
+        && data.betAmount is number && data.betAmount >= 1 && data.betAmount <= 500000
+        && data.totalOdds is number && data.totalOdds >= 1.01 && data.totalOdds <= 500
+        && data.potentialPayout is number && data.potentialPayout >= data.betAmount && data.potentialPayout <= data.betAmount * 500 + 1
+        && data.picksCount is number && data.picksCount >= 1 && data.picksCount <= 8
+        && data.choiceText is string && data.choiceText.size() >= 1 && data.choiceText.size() <= 200
+        && data.picks is list && data.picks.size() >= 1 && data.picks.size() <= 8 && data.picks.size() == data.picksCount && data.picks[0] is map
+        && data.currentMinute is number && data.currentMinute >= 0 && data.currentMinute <= 90
+        && data.cashoutOffer is number && data.cashoutOffer >= 0 && data.cashoutOffer <= data.potentialPayout * 0.88 + 0.05
+        && data.cashoutEligible is bool
+        && data.status in ['live', 'cashed_out', 'won', 'lost']
+        && data.payout is number && data.payout >= 0 && data.payout <= data.potentialPayout + 0.05
+        && (
+          (data.status in ['live', 'lost'] && data.payout == 0) ||
+          (data.status == 'cashed_out' && data.currentMinute >= 5 && data.currentMinute <= 80 && data.payout >= 5 && data.payout <= data.potentialPayout * 0.88 + 0.05) ||
+          (data.status == 'won' && data.payout > 0 && data.payout <= data.potentialPayout + 0.05)
+        )
+        && data.resultText is string && data.resultText.size() <= 250
+        && data.updatedAt == request.time;
+    }
+
+    function isValidFootballPopularity(data, matchId) {
+      return data.keys().hasAll([
+          'matchId', 'home', 'away', 'homeCode', 'awayCode',
+          'leagueLabel', 'homeBets', 'drawBets', 'awayBets',
+          'totalBets', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'matchId', 'home', 'away', 'homeCode', 'awayCode',
+          'leagueLabel', 'homeBets', 'drawBets', 'awayBets',
+          'totalBets', 'updatedAt'
+        ])
+        && isValidId(data.matchId) && data.matchId == matchId
+        && data.home is string && data.home.size() >= 1 && data.home.size() <= 80
+        && data.away is string && data.away.size() >= 1 && data.away.size() <= 80
+        && data.homeCode is string && data.homeCode.size() >= 2 && data.homeCode.size() <= 6
+        && data.awayCode is string && data.awayCode.size() >= 2 && data.awayCode.size() <= 6
+        && data.leagueLabel is string && data.leagueLabel.size() >= 1 && data.leagueLabel.size() <= 80
+        && data.homeBets is number && data.homeBets >= 0
+        && data.drawBets is number && data.drawBets >= 0
+        && data.awayBets is number && data.awayBets >= 0
+        && data.totalBets is number && data.totalBets >= 1
+        && data.updatedAt == request.time;
+    }
+
+    function expectedCurrentWeekKey() {
+      return 'W' + string(int((request.time.toMillis() + 259200000) / 604800000));
+    }
+
+    function isValidWeeklyLeaderboard(data, entryId) {
+      return data.keys().hasAll([
+          'id', 'uid', 'weekKey', 'playerMask', 'totalWinnings',
+          'winsCount', 'biggestWin', 'lastGameName', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'uid', 'weekKey', 'playerMask', 'totalWinnings',
+          'winsCount', 'biggestWin', 'lastGameName', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id) && data.id == entryId
+        && data.uid is string && data.uid == request.auth.uid && data.uid.size() <= 128
+        && data.weekKey is string && data.weekKey == expectedCurrentWeekKey() && data.weekKey.size() >= 2 && data.weekKey.size() <= 12 && data.weekKey.matches('^W[0-9]{1,8}$')
+        && data.id == request.auth.uid + '_' + data.weekKey
+        && data.playerMask is string && data.playerMask.size() >= 2 && data.playerMask.size() <= 32
+        && data.totalWinnings is number && data.totalWinnings > 0 && data.totalWinnings <= 1000000000
+        && data.winsCount is number && data.winsCount >= 1
+        && data.biggestWin is number && data.biggestWin > 0 && data.biggestWin <= data.totalWinnings + 0.02
+        && data.lastGameName is string && data.lastGameName.size() >= 1 && data.lastGameName.size() <= 80
+        && data.updatedAt == request.time;
+    }
+
+    function isLeaderboardWinDeltaValid(delta) {
+      return existsAfter(/databases/$(database)/documents/users/$(request.auth.uid))
+        && (
+          (
+            getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.lastActionType == 'bet'
+            && existsAfter(/databases/$(database)/documents/bets/$(getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.lastActionRef))
+            && getAfter(/databases/$(database)/documents/bets/$(getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.lastActionRef)).data.uid == request.auth.uid
+            && getAfter(/databases/$(database)/documents/bets/$(getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.lastActionRef)).data.won == true
+            && delta >= getAfter(/databases/$(database)/documents/bets/$(getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.lastActionRef)).data.payout - 0.02
+            && delta <= getAfter(/databases/$(database)/documents/bets/$(getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.lastActionRef)).data.payout + 0.02
+          ) || (
+            getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.lastActionType == 'football_settle'
+            && existsAfter(/databases/$(database)/documents/footballTickets/$(getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.lastActionRef))
+            && getAfter(/databases/$(database)/documents/footballTickets/$(getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.lastActionRef)).data.uid == request.auth.uid
+            && getAfter(/databases/$(database)/documents/footballTickets/$(getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.lastActionRef)).data.status in ['won', 'cashed_out']
+            && delta >= getAfter(/databases/$(database)/documents/footballTickets/$(getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.lastActionRef)).data.payout - 0.02
+            && delta <= getAfter(/databases/$(database)/documents/footballTickets/$(getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.lastActionRef)).data.payout + 0.02
+          )
+        );
+    }
+
+    // --- Collection Rules ---
+
+    // 1. System Telebirr Settings & Public Branding
+    match /settings/telebirr {
+      allow get: if isSignedIn();
+      allow list: if false;
+      allow create, update: if isAdmin() && isValidTelebirrSettings(incoming());
+      allow delete: if false;
+    }
+
+    match /settings/branding {
+      allow get: if true;
+      allow list: if false;
+      allow create, update: if isAdmin() && isValidBrandingSettings(incoming());
+      allow delete: if false;
+    }
+
+    match /settings/gameConfig {
+      allow get: if isSignedIn();
+      allow list: if false;
+      allow create, update: if isAdmin() && isValidGameConfig(incoming());
+      allow delete: if false;
+    }
+
+    // 2. Admin Registry
+    match /admins/{uid} {
+      allow get: if isValidId(uid) && (isOwner(uid) || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isValidId(uid) && isAdmin() && isValidAdminRecord(incoming(), uid);
+      allow update, delete: if false;
+    }
+
+    // 3. Player Wallet & Split PII Subcollection
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin();
+
+      allow create: if isValidId(userId)
+        && isOwner(userId)
+        && isValidUserWallet(incoming(), userId)
+        && incoming().balance == 0
+        && incoming().hasDeposited == false
+        && incoming().totalDeposited == 0
+        && incoming().totalWithdrawn == 0
+        && incoming().lastActionType == 'init'
+        && incoming().lastActionRef == 'init'
+        && incoming().createdAt == request.time;
+
+      allow update: if isValidId(userId)
+        && isValidUserWallet(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && (
+          // Action 1: Admin Refund on rejected withdrawal
+          (
+            isAdmin()
+            && incoming().lastActionType == 'refund'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['balance', 'totalWithdrawn', 'lastActionType', 'lastActionRef', 'updatedAt'])
+          ) ||
+          // Action 2: Atomic Player Deposit
+          (
+            isOwner(userId)
+            && incoming().lastActionType == 'deposit'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['balance', 'hasDeposited', 'totalDeposited', 'lastActionType', 'lastActionRef', 'updatedAt'])
+            && isValidTxId(incoming().lastActionRef)
+            && !exists(/databases/$(database)/documents/deposits/$(incoming().lastActionRef))
+            && existsAfter(/databases/$(database)/documents/deposits/$(incoming().lastActionRef))
+            && getAfter(/databases/$(database)/documents/deposits/$(incoming().lastActionRef)).data.uid == userId
+            && getAfter(/databases/$(database)/documents/deposits/$(incoming().lastActionRef)).data.amount >= 100
+            && incoming().balance == existing().balance + getAfter(/databases/$(database)/documents/deposits/$(incoming().lastActionRef)).data.amount
+            && incoming().totalDeposited == existing().totalDeposited + getAfter(/databases/$(database)/documents/deposits/$(incoming().lastActionRef)).data.amount
+            && incoming().totalWithdrawn == existing().totalWithdrawn
+            && incoming().hasDeposited == true
+          ) ||
+          // Action 3: Atomic Player Bet
+          (
+            isOwner(userId)
+            && incoming().lastActionType == 'bet'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['balance', 'lastActionType', 'lastActionRef', 'updatedAt'])
+            && isValidId(incoming().lastActionRef)
+            && !exists(/databases/$(database)/documents/bets/$(incoming().lastActionRef))
+            && existsAfter(/databases/$(database)/documents/bets/$(incoming().lastActionRef))
+            && getAfter(/databases/$(database)/documents/bets/$(incoming().lastActionRef)).data.uid == userId
+            && getAfter(/databases/$(database)/documents/bets/$(incoming().lastActionRef)).data.betAmount <= existing().balance
+            && incoming().balance == existing().balance - getAfter(/databases/$(database)/documents/bets/$(incoming().lastActionRef)).data.betAmount + getAfter(/databases/$(database)/documents/bets/$(incoming().lastActionRef)).data.payout
+            && incoming().totalDeposited == existing().totalDeposited
+            && incoming().totalWithdrawn == existing().totalWithdrawn
+            && incoming().hasDeposited == existing().hasDeposited
+          ) ||
+          // Action 4: Atomic Player Withdrawal Hold
+          (
+            isOwner(userId)
+            && existing().hasDeposited == true
+            && incoming().lastActionType == 'withdraw'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['balance', 'totalWithdrawn', 'lastActionType', 'lastActionRef', 'updatedAt'])
+            && isValidId(incoming().lastActionRef)
+            && !exists(/databases/$(database)/documents/withdrawals/$(incoming().lastActionRef))
+            && existsAfter(/databases/$(database)/documents/withdrawals/$(incoming().lastActionRef))
+            && getAfter(/databases/$(database)/documents/withdrawals/$(incoming().lastActionRef)).data.uid == userId
+            && getAfter(/databases/$(database)/documents/withdrawals/$(incoming().lastActionRef)).data.amount >= 500
+            && getAfter(/databases/$(database)/documents/withdrawals/$(incoming().lastActionRef)).data.amount <= existing().balance
+            && incoming().balance == existing().balance - getAfter(/databases/$(database)/documents/withdrawals/$(incoming().lastActionRef)).data.amount
+            && incoming().totalWithdrawn == existing().totalWithdrawn + getAfter(/databases/$(database)/documents/withdrawals/$(incoming().lastActionRef)).data.amount
+            && incoming().totalDeposited == existing().totalDeposited
+            && incoming().hasDeposited == existing().hasDeposited
+          ) ||
+          // Action 5: Atomic Daily Login Bonus Claim (once per UTC day)
+          (
+            isOwner(userId)
+            && incoming().lastActionType == 'bonus'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['balance', 'lastActionType', 'lastActionRef', 'updatedAt'])
+            && isValidId(incoming().lastActionRef)
+            && incoming().lastActionRef == expectedDailyBonusId(userId)
+            && !exists(/databases/$(database)/documents/dailyBonuses/$(incoming().lastActionRef))
+            && existsAfter(/databases/$(database)/documents/dailyBonuses/$(incoming().lastActionRef))
+            && getAfter(/databases/$(database)/documents/dailyBonuses/$(incoming().lastActionRef)).data.uid == userId
+            && getAfter(/databases/$(database)/documents/dailyBonuses/$(incoming().lastActionRef)).data.amount == 10
+            && incoming().balance == existing().balance + 10
+            && incoming().totalDeposited == existing().totalDeposited
+            && incoming().totalWithdrawn == existing().totalWithdrawn
+            && incoming().hasDeposited == existing().hasDeposited
+          ) ||
+          // Action 6: Atomic Live Football Ticket Placement (deduct stake)
+          (
+            isOwner(userId)
+            && incoming().lastActionType == 'football_place'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['balance', 'lastActionType', 'lastActionRef', 'updatedAt'])
+            && isValidId(incoming().lastActionRef)
+            && !exists(/databases/$(database)/documents/footballTickets/$(incoming().lastActionRef))
+            && existsAfter(/databases/$(database)/documents/footballTickets/$(incoming().lastActionRef))
+            && getAfter(/databases/$(database)/documents/footballTickets/$(incoming().lastActionRef)).data.uid == userId
+            && getAfter(/databases/$(database)/documents/footballTickets/$(incoming().lastActionRef)).data.status == 'live'
+            && getAfter(/databases/$(database)/documents/footballTickets/$(incoming().lastActionRef)).data.betAmount <= existing().balance
+            && incoming().balance >= existing().balance - getAfter(/databases/$(database)/documents/footballTickets/$(incoming().lastActionRef)).data.betAmount - 0.01
+            && incoming().balance <= existing().balance - getAfter(/databases/$(database)/documents/footballTickets/$(incoming().lastActionRef)).data.betAmount + 0.01
+            && incoming().totalDeposited == existing().totalDeposited
+            && incoming().totalWithdrawn == existing().totalWithdrawn
+            && incoming().hasDeposited == existing().hasDeposited
+          ) ||
+          // Action 7: Atomic Live Football Cashout or Full-Time Settlement
+          (
+            isOwner(userId)
+            && incoming().lastActionType == 'football_settle'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['balance', 'lastActionType', 'lastActionRef', 'updatedAt'])
+            && isValidId(incoming().lastActionRef)
+            && exists(/databases/$(database)/documents/footballTickets/$(incoming().lastActionRef))
+            && get(/databases/$(database)/documents/footballTickets/$(incoming().lastActionRef)).data.uid == userId
+            && get(/databases/$(database)/documents/footballTickets/$(incoming().lastActionRef)).data.status == 'live'
+            && existsAfter(/databases/$(database)/documents/footballTickets/$(incoming().lastActionRef))
+            && getAfter(/databases/$(database)/documents/footballTickets/$(incoming().lastActionRef)).data.uid == userId
+            && getAfter(/databases/$(database)/documents/footballTickets/$(incoming().lastActionRef)).data.status in ['cashed_out', 'won', 'lost']
+            && incoming().balance >= existing().balance + getAfter(/databases/$(database)/documents/footballTickets/$(incoming().lastActionRef)).data.payout - 0.01
+            && incoming().balance <= existing().balance + getAfter(/databases/$(database)/documents/footballTickets/$(incoming().lastActionRef)).data.payout + 0.01
+            && incoming().totalDeposited == existing().totalDeposited
+            && incoming().totalWithdrawn == existing().totalWithdrawn
+            && incoming().hasDeposited == existing().hasDeposited
+          )
+        );
+
+      allow delete: if false;
+
+      match /private/{docId} {
+        allow get: if isValidId(userId) && docId == 'info' && (isOwner(userId) || isAdmin());
+        allow list: if false;
+        allow create: if isValidId(userId) && docId == 'info' && isOwner(userId) && isValidUserPrivateInfo(incoming(), userId);
+        allow update: if isValidId(userId) && docId == 'info' && isOwner(userId)
+          && isValidUserPrivateInfo(incoming(), userId)
+          && incoming().uid == existing().uid
+          && incoming().telebirrPhone == existing().telebirrPhone
+          && incoming().diff(existing()).affectedKeys().hasOnly(['email', 'updatedAt']);
+        allow delete: if false;
+      }
+    }
+
+    // 4. Anti-Replay Used Transaction IDs
+    match /usedTxIds/{txId} {
+      allow get: if isValidTxId(txId) && (isAdmin() || (resource != null && isOwner(resource.data.uid)));
+      allow list: if false;
+      allow create: if isValidTxId(txId)
+        && isVerifiedUser()
+        && isValidUsedTxId(incoming(), txId)
+        && existsAfter(/databases/$(database)/documents/deposits/$(txId));
+      allow update, delete: if false;
+    }
+
+    // 5. Telebirr Deposits
+    match /deposits/{depositId} {
+      allow get: if isValidTxId(depositId) && (isAdmin() || (resource != null && isOwner(resource.data.uid)));
+      allow list: if isAdmin() || (isVerifiedUser() && resource.data.uid == request.auth.uid);
+      allow create: if isValidTxId(depositId)
+        && isVerifiedUser()
+        && isValidDeposit(incoming(), depositId)
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && existsAfter(/databases/$(database)/documents/usedTxIds/$(depositId))
+        && !exists(/databases/$(database)/documents/usedTxIds/$(depositId));
+      allow update, delete: if false;
+    }
+
+    // 6. Telebirr Withdrawals
+    match /withdrawals/{withdrawalId} {
+      allow get: if isValidId(withdrawalId) && (isAdmin() || (resource != null && isOwner(resource.data.uid)));
+      allow list: if isAdmin() || (isVerifiedUser() && resource.data.uid == request.auth.uid);
+
+      allow create: if isValidId(withdrawalId)
+        && isVerifiedUser()
+        && isValidWithdrawal(incoming(), withdrawalId)
+        && incoming().uid == request.auth.uid
+        && incoming().status == 'pending'
+        && incoming().systemVerified == false
+        && incoming().adminPinConfirmed == false
+        && !('processedBy' in incoming())
+        && incoming().createdAt == request.time
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.hasDeposited == true
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.balance >= incoming().amount
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid)/private/info)
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)/private/info).data.telebirrPhone == incoming().playerPhone;
+
+      allow update: if isValidId(withdrawalId)
+        && isValidWithdrawal(incoming(), withdrawalId)
+        && incoming().uid == existing().uid
+        && incoming().id == existing().id
+        && incoming().playerPhone == existing().playerPhone
+        && incoming().sourceSystemPhone == existing().sourceSystemPhone
+        && incoming().amount == existing().amount
+        && incoming().createdAt == existing().createdAt
+        && existing().status == 'pending'
+        && (
+          // Action 1: System automated verification marking green ("ትክክል ነው")
+          (
+            (isOwner(existing().uid) || isAdmin())
+            && existing().systemVerified == false
+            && incoming().systemVerified == true
+            && incoming().status == 'pending'
+            && incoming().adminPinConfirmed == false
+            && incoming().diff(existing()).affectedKeys().hasOnly(['systemVerified', 'systemVerifiedText', 'updatedAt'])
+          ) ||
+          // Action 2: Admin enters Telebirr Secret PIN and completes payout
+          (
+            isAdmin()
+            && existing().systemVerified == true
+            && incoming().status == 'completed'
+            && incoming().adminPinConfirmed == true
+            && incoming().processedBy == request.auth.uid
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'adminPinConfirmed', 'processedBy', 'updatedAt'])
+          ) ||
+          // Action 3: Admin rejects pending withdrawal
+          (
+            isAdmin()
+            && incoming().status == 'rejected'
+            && incoming().processedBy == request.auth.uid
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'processedBy', 'updatedAt'])
+          )
+        );
+
+      allow delete: if false;
+    }
+
+    // 7. Game Bets
+    match /bets/{betId} {
+      allow get: if isValidId(betId) && (isAdmin() || (resource != null && isOwner(resource.data.uid)));
+      allow list: if isAdmin() || (isVerifiedUser() && resource.data.uid == request.auth.uid);
+      allow create: if isValidId(betId)
+        && isVerifiedUser()
+        && isValidBet(incoming(), betId)
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && (
+          !exists(/databases/$(database)/documents/settings/gameConfig) ||
+          (
+            incoming().betAmount >= get(/databases/$(database)/documents/settings/gameConfig).data.minBet &&
+            incoming().betAmount <= get(/databases/$(database)/documents/settings/gameConfig).data.maxBet
+          )
+        );
+      allow update, delete: if false;
+    }
+
+    // 8. Income & Expense Ledger
+    match /ledger/{entryId} {
+      allow get, list: if isAdmin();
+      allow create: if isValidId(entryId)
+        && isVerifiedUser()
+        && isValidLedgerEntry(incoming(), entryId)
+        && (
+          isAdmin() ||
+          (
+            incoming().uid == request.auth.uid
+            && incoming().type == 'income'
+            && incoming().category == 'deposit'
+            && existsAfter(/databases/$(database)/documents/deposits/$(incoming().referenceId))
+            && getAfter(/databases/$(database)/documents/deposits/$(incoming().referenceId)).data.amount == incoming().amount
+          )
+        );
+      allow update, delete: if false;
+    }
+
+    // 9. Daily Login Bonuses
+    match /dailyBonuses/{claimId} {
+      allow get: if isValidId(claimId) && (
+        isAdmin() ||
+        (isVerifiedUser() && claimId.matches('^' + request.auth.uid + '_[0-9]{4}_[0-9]{1,2}_[0-9]{1,2}$')) ||
+        (resource != null && isOwner(resource.data.uid))
+      );
+      allow list: if isAdmin() || (isVerifiedUser() && resource.data.uid == request.auth.uid);
+      allow create: if isValidId(claimId)
+        && isVerifiedUser()
+        && isValidDailyBonus(incoming(), claimId)
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && existsAfter(/databases/$(database)/documents/users/$(request.auth.uid))
+        && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.lastActionType == 'bonus'
+        && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.lastActionRef == claimId;
+      allow update, delete: if false;
+    }
+
+    // 10. Public Live Winners Feed (Zero PII, tied atomically to winning bets)
+    match /recentWinners/{winnerId} {
+      allow get: if isValidId(winnerId) && isSignedIn();
+      allow list: if isSignedIn();
+      allow create: if isValidId(winnerId)
+        && isVerifiedUser()
+        && isValidRecentWinner(incoming(), winnerId)
+        && existsAfter(/databases/$(database)/documents/bets/$(winnerId))
+        && getAfter(/databases/$(database)/documents/bets/$(winnerId)).data.uid == request.auth.uid
+        && getAfter(/databases/$(database)/documents/bets/$(winnerId)).data.won == true
+        && getAfter(/databases/$(database)/documents/bets/$(winnerId)).data.payout == incoming().payout
+        && getAfter(/databases/$(database)/documents/bets/$(winnerId)).data.gameName == incoming().gameName;
+      allow update, delete: if false;
+    }
+
+    // 11. Live Football Tickets & Rule-Enforced Cashout
+    match /footballTickets/{ticketId} {
+      allow get: if isValidId(ticketId) && (isAdmin() || (resource != null && isOwner(resource.data.uid)));
+      allow list: if isAdmin() || (isVerifiedUser() && resource.data.uid == request.auth.uid);
+
+      allow create: if isValidId(ticketId)
+        && isVerifiedUser()
+        && isValidFootballTicket(incoming(), ticketId)
+        && incoming().status == 'live'
+        && incoming().payout == 0
+        && incoming().createdAt == request.time
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && existsAfter(/databases/$(database)/documents/users/$(request.auth.uid))
+        && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.lastActionType == 'football_place'
+        && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.lastActionRef == ticketId
+        && (
+          !exists(/databases/$(database)/documents/settings/gameConfig) ||
+          (
+            incoming().betAmount >= get(/databases/$(database)/documents/settings/gameConfig).data.minBet &&
+            incoming().betAmount <= get(/databases/$(database)/documents/settings/gameConfig).data.maxBet
+          )
+        );
+
+      allow update: if isValidId(ticketId)
+        && isVerifiedUser()
+        && isValidFootballTicket(incoming(), ticketId)
+        && isOwner(existing().uid)
+        && existing().status == 'live'
+        && incoming().id == existing().id
+        && incoming().uid == existing().uid
+        && incoming().betAmount == existing().betAmount
+        && incoming().totalOdds == existing().totalOdds
+        && incoming().potentialPayout == existing().potentialPayout
+        && incoming().picksCount == existing().picksCount
+        && incoming().choiceText == existing().choiceText
+        && incoming().createdAt == existing().createdAt
+        && (
+          // Action A: Live match tick progression while ticket stays live
+          (
+            incoming().status == 'live'
+            && incoming().payout == 0
+            && incoming().currentMinute >= existing().currentMinute
+            && incoming().diff(existing()).affectedKeys().hasOnly(['picks', 'currentMinute', 'cashoutOffer', 'cashoutEligible', 'resultText', 'updatedAt'])
+          ) ||
+          // Action B: Atomic Cashout (5'-80') or Full-Time Settlement
+          (
+            incoming().status in ['cashed_out', 'won', 'lost']
+            && incoming().diff(existing()).affectedKeys().hasOnly(['picks', 'currentMinute', 'cashoutOffer', 'cashoutEligible', 'status', 'payout', 'resultText', 'updatedAt'])
+            && existsAfter(/databases/$(database)/documents/users/$(request.auth.uid))
+            && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.lastActionType == 'football_settle'
+            && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.lastActionRef == ticketId
+          )
+        );
+
+      allow delete: if false;
+    }
+
+    // 12. Anonymized Public Match Popularity Counters (Zero PII, tied to football_place)
+    match /footballPopularity/{matchId} {
+      allow get: if isValidId(matchId) && isSignedIn();
+      allow list: if isSignedIn();
+
+      allow create: if isValidId(matchId)
+        && isVerifiedUser()
+        && isValidFootballPopularity(incoming(), matchId)
+        && incoming().totalBets == 1
+        && (incoming().homeBets + incoming().drawBets + incoming().awayBets) <= 1
+        && existsAfter(/databases/$(database)/documents/users/$(request.auth.uid))
+        && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.lastActionType == 'football_place';
+
+      allow update: if isValidId(matchId)
+        && isVerifiedUser()
+        && isValidFootballPopularity(incoming(), matchId)
+        && incoming().matchId == existing().matchId
+        && incoming().totalBets == existing().totalBets + 1
+        && incoming().homeBets >= existing().homeBets && incoming().homeBets <= existing().homeBets + 1
+        && incoming().drawBets >= existing().drawBets && incoming().drawBets <= existing().drawBets + 1
+        && incoming().awayBets >= existing().awayBets && incoming().awayBets <= existing().awayBets + 1
+        && incoming().diff(existing()).affectedKeys().hasOnly(['home', 'away', 'homeCode', 'awayCode', 'leagueLabel', 'homeBets', 'drawBets', 'awayBets', 'totalBets', 'updatedAt'])
+        && existsAfter(/databases/$(database)/documents/users/$(request.auth.uid))
+        && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.lastActionType == 'football_place';
+
+      allow delete: if false;
+    }
+
+    // 13. Anonymized Weekly Total Winnings Leaderboard (Zero PII, tied atomically to payouts)
+    match /weeklyLeaderboard/{entryId} {
+      allow get: if isValidId(entryId) && isSignedIn();
+      allow list: if isSignedIn() && resource.data.weekKey == expectedCurrentWeekKey();
+
+      allow create: if isValidId(entryId)
+        && isVerifiedUser()
+        && isValidWeeklyLeaderboard(incoming(), entryId)
+        && incoming().winsCount == 1
+        && incoming().biggestWin >= incoming().totalWinnings - 0.02
+        && incoming().biggestWin <= incoming().totalWinnings + 0.02
+        && incoming().createdAt == request.time
+        && isLeaderboardWinDeltaValid(incoming().totalWinnings);
+
+      allow update: if isValidId(entryId)
+        && isVerifiedUser()
+        && isValidWeeklyLeaderboard(incoming(), entryId)
+        && isOwner(existing().uid)
+        && incoming().id == existing().id
+        && incoming().uid == existing().uid
+        && incoming().weekKey == existing().weekKey
+        && incoming().createdAt == existing().createdAt
+        && incoming().winsCount == existing().winsCount + 1
+        && incoming().biggestWin >= existing().biggestWin
+        && incoming().diff(existing()).affectedKeys().hasOnly(['playerMask', 'totalWinnings', 'winsCount', 'biggestWin', 'lastGameName', 'updatedAt'])
+        && isLeaderboardWinDeltaValid(incoming().totalWinnings - existing().totalWinnings);
+
+      allow delete: if false;
+    }
+  }
+}
