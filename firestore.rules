@@ -41,13 +41,28 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == uid;
     }
 
-    function isAdmin() {
+    function isRecoveredSessionFor(targetUid) {
       return isSignedIn()
-        && request.auth.token.email_verified == true
-        && (
-          request.auth.token.email == 'yirsawbiniyam@gmail.com' ||
-          exists(/databases/$(database)/documents/admins/$(request.auth.uid))
-        );
+        && targetUid is string
+        && targetUid.size() >= 1
+        && targetUid.size() <= 128
+        && request.auth.token.email is string
+        && request.auth.token.email.matches('^0[79][0-9]{8}\\.r[0-9]+\\.' + targetUid + '@edilbet\\.app$');
+    }
+
+    function isPhoneOwnerEmail(phone) {
+      return isSignedIn()
+        && isValidPhone(phone)
+        && request.auth.token.email is string
+        && request.auth.token.email.matches('^' + phone + '(\\.r[0-9]+\\.[a-zA-Z0-9_\\-]+)?@edilbet\\.app$');
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        (request.auth.token.email_verified == true && request.auth.token.email == 'yirsawbiniyam@gmail.com') ||
+        request.auth.token.email == 'owner.admin@edilbet.app' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
     }
 
     // --- Entity Validation Blueprints ---
@@ -88,7 +103,7 @@ service cloud.firestore {
           'updatedBy', 'updatedAt'
         ])
         && data.minBet is number && data.minBet >= 1 && data.minBet <= 50000
-        && data.maxBet is number && data.maxBet >= data.minBet && data.maxBet <= 500000
+        && data.maxBet is number && data.maxBet >= data.minBet && data.maxBet <= 10000000
         && data.houseWinRate is number && data.houseWinRate >= 0.05 && data.houseWinRate <= 0.50
         && data.singleDiceRangeOdds is number && data.singleDiceRangeOdds >= 1.2 && data.singleDiceRangeOdds <= 5.0
         && data.singleDiceExactOdds is number && data.singleDiceExactOdds >= 2.0 && data.singleDiceExactOdds <= 12.0
@@ -97,7 +112,7 @@ service cloud.firestore {
         && data.coinOdds is number && data.coinOdds >= 1.2 && data.coinOdds <= 4.0
         && data.luckyOdds is number && data.luckyOdds >= 5.0 && data.luckyOdds <= 35.0
         && data.footballOddsScale is number && data.footballOddsScale >= 0.7 && data.footballOddsScale <= 1.5
-        && data.footballMaxOdds is number && data.footballMaxOdds >= 5 && data.footballMaxOdds <= 500
+        && data.footballMaxOdds is number && data.footballMaxOdds >= 5 && data.footballMaxOdds <= 1000000
         && data.updatedBy is string && data.updatedBy == request.auth.uid && data.updatedBy.size() <= 128
         && data.updatedAt == request.time;
     }
@@ -112,10 +127,15 @@ service cloud.firestore {
 
     function isValidUserWallet(data, userId) {
       return data.keys().hasAll(['uid', 'displayName', 'balance', 'hasDeposited', 'totalDeposited', 'totalWithdrawn', 'lastActionType', 'lastActionRef', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['uid', 'displayName', 'balance', 'hasDeposited', 'totalDeposited', 'totalWithdrawn', 'lastActionType', 'lastActionRef', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'displayName', 'username', 'primaryUid', 'mustChangePassword', 'passwordVersion', 'passwordUpdatedAt', 'balance', 'hasDeposited', 'totalDeposited', 'totalWithdrawn', 'lastActionType', 'lastActionRef', 'createdAt', 'updatedAt'])
         && data.uid is string && data.uid == userId && data.uid.size() <= 128
         && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80
-        && data.balance is number && data.balance >= 0 && data.balance <= 10000000
+        && (!('username' in data) || (data.username is string && data.username.size() >= 2 && data.username.size() <= 80))
+        && (!('primaryUid' in data) || isValidId(data.primaryUid))
+        && (!('mustChangePassword' in data) || data.mustChangePassword is bool)
+        && (!('passwordVersion' in data) || (data.passwordVersion is number && data.passwordVersion >= 1))
+        && (!('passwordUpdatedAt' in data) || data.passwordUpdatedAt is timestamp)
+        && data.balance is number && data.balance >= 0 && data.balance <= 100000000
         && data.hasDeposited is bool
         && data.totalDeposited is number && data.totalDeposited >= 0
         && data.totalWithdrawn is number && data.totalWithdrawn >= 0
@@ -144,11 +164,47 @@ service cloud.firestore {
     }
 
     function isValidUserPrivateInfo(data, userId) {
-      return data.keys().hasAll(['uid', 'email', 'telebirrPhone', 'updatedAt'])
-        && data.keys().hasOnly(['uid', 'email', 'telebirrPhone', 'updatedAt'])
+      return data.keys().hasAll(['uid', 'email', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'username', 'telebirrPhone', 'updatedAt'])
         && data.uid is string && data.uid == userId && data.uid.size() <= 128
         && data.email is string && data.email.size() >= 3 && data.email.size() <= 150
-        && isValidPhone(data.telebirrPhone)
+        && (!('username' in data) || (data.username is string && data.username.size() >= 2 && data.username.size() <= 80))
+        && (!('telebirrPhone' in data) || isValidPhone(data.telebirrPhone))
+        && data.updatedAt == request.time;
+    }
+
+    function isValidUsernameIndex(data, usernameId) {
+      return data.keys().hasAll(['id', 'uid', 'username', 'authEmail', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'uid', 'username', 'authEmail', 'phone', 'updatedAt'])
+        && isValidId(data.id) && data.id == usernameId
+        && data.uid is string && data.uid == request.auth.uid && data.uid.size() <= 128
+        && data.username is string && data.username.size() >= 2 && data.username.size() <= 80
+        && data.authEmail is string && data.authEmail.size() >= 5 && data.authEmail.size() <= 150
+        && (!('phone' in data) || isValidPhone(data.phone))
+        && data.updatedAt == request.time;
+    }
+
+    function isValidRecoveryProfile(data, profileId) {
+      return data.keys().hasAll(['id', 'phone', 'primaryUid', 'activeUid', 'recoveryCount', 'authEmail', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'phone', 'primaryUid', 'activeUid', 'recoveryCount', 'authEmail', 'username', 'updatedAt'])
+        && data.id is string && data.id == profileId && data.id.size() == 13 && data.id.matches('^ph_0[79][0-9]{8}$')
+        && isValidPhone(data.phone)
+        && data.id == 'ph_' + data.phone
+        && isValidId(data.primaryUid)
+        && isValidId(data.activeUid)
+        && data.recoveryCount is number && data.recoveryCount >= 0
+        && data.authEmail is string && data.authEmail.size() >= 5 && data.authEmail.size() <= 150
+        && (!('username' in data) || (data.username is string && data.username.size() >= 2 && data.username.size() <= 80))
+        && data.updatedAt == request.time;
+    }
+
+    function isValidAdminBootstrap(data) {
+      return data.keys().hasAll(['ownerUid', 'bootstrapClaimed', 'passwordVersion', 'passwordUpdatedAt', 'updatedAt'])
+        && data.keys().hasOnly(['ownerUid', 'bootstrapClaimed', 'passwordVersion', 'passwordUpdatedAt', 'updatedAt'])
+        && data.ownerUid is string && data.ownerUid == request.auth.uid && data.ownerUid.size() <= 128
+        && data.bootstrapClaimed is bool
+        && data.passwordVersion is number && data.passwordVersion >= 1
+        && data.passwordUpdatedAt is timestamp
         && data.updatedAt == request.time;
     }
 
@@ -195,17 +251,18 @@ service cloud.firestore {
 
     function isValidBet(data, betId) {
       return data.keys().hasAll(['id', 'uid', 'gameType', 'gameName', 'betAmount', 'multiplier', 'choiceText', 'resultText', 'won', 'payout', 'createdAt'])
-        && data.keys().hasOnly(['id', 'uid', 'gameType', 'gameName', 'betAmount', 'multiplier', 'choiceText', 'resultText', 'won', 'payout', 'createdAt'])
+        && data.keys().hasOnly(['id', 'uid', 'ownerPhone', 'gameType', 'gameName', 'betAmount', 'multiplier', 'choiceText', 'resultText', 'won', 'payout', 'createdAt'])
         && isValidId(data.id) && data.id == betId
         && data.uid is string && data.uid == request.auth.uid && data.uid.size() <= 128
+        && (!('ownerPhone' in data) || isValidPhone(data.ownerPhone))
         && data.gameType in ['dice_single', 'dice_double', 'dice_d100', 'coin', 'lucky', 'football']
         && data.gameName is string && data.gameName.size() >= 1 && data.gameName.size() <= 80
-        && data.betAmount is number && data.betAmount >= 1 && data.betAmount <= 500000
-        && data.multiplier is number && data.multiplier >= 1 && data.multiplier <= 500
+        && data.betAmount is number && data.betAmount >= 1 && data.betAmount <= 10000000
+        && data.multiplier is number && data.multiplier >= 1 && data.multiplier <= 1000000
         && data.choiceText is string && data.choiceText.size() >= 1 && data.choiceText.size() <= 200
         && data.resultText is string && data.resultText.size() >= 1 && data.resultText.size() <= 250
         && data.won is bool
-        && data.payout is number && data.payout >= 0 && data.payout <= data.betAmount * 500
+        && data.payout is number && data.payout >= 0 && data.payout <= data.betAmount * 1000000 + 1
         && ((data.won == true && data.payout > 0) || (data.won == false && data.payout == 0))
         && data.createdAt == request.time;
     }
@@ -233,8 +290,8 @@ service cloud.firestore {
         && data.playerMask is string && data.playerMask.size() >= 2 && data.playerMask.size() <= 32
         && data.gameType in ['dice_single', 'dice_double', 'dice_d100', 'coin', 'lucky', 'football']
         && data.gameName is string && data.gameName.size() >= 1 && data.gameName.size() <= 80
-        && data.multiplier is number && data.multiplier >= 1 && data.multiplier <= 500
-        && data.payout is number && data.payout > 0 && data.payout <= 250000000
+        && data.multiplier is number && data.multiplier >= 1 && data.multiplier <= 1000000
+        && data.payout is number && data.payout > 0 && data.payout <= 1000000000
         && data.createdAt == request.time;
     }
 
@@ -246,19 +303,19 @@ service cloud.firestore {
           'resultText', 'createdAt', 'updatedAt'
         ])
         && data.keys().hasOnly([
-          'id', 'uid', 'betAmount', 'totalOdds', 'potentialPayout',
+          'id', 'uid', 'ownerPhone', 'betAmount', 'totalOdds', 'potentialPayout',
           'picksCount', 'choiceText', 'picks', 'currentMinute',
           'cashoutOffer', 'cashoutEligible', 'status', 'payout',
           'resultText', 'createdAt', 'updatedAt'
         ])
         && isValidId(data.id) && data.id == ticketId
-        && data.uid is string && data.uid == request.auth.uid && data.uid.size() <= 128
-        && data.betAmount is number && data.betAmount >= 1 && data.betAmount <= 500000
-        && data.totalOdds is number && data.totalOdds >= 1.01 && data.totalOdds <= 500
-        && data.potentialPayout is number && data.potentialPayout >= data.betAmount && data.potentialPayout <= data.betAmount * 500 + 1
-        && data.picksCount is number && data.picksCount >= 1 && data.picksCount <= 8
+        && (!('ownerPhone' in data) || isValidPhone(data.ownerPhone))
+        && data.betAmount is number && data.betAmount >= 1 && data.betAmount <= 10000000
+        && data.totalOdds is number && data.totalOdds >= 1.01 && data.totalOdds <= 1000000
+        && data.potentialPayout is number && data.potentialPayout >= data.betAmount && data.potentialPayout <= data.betAmount * 1000000 + 1
+        && data.picksCount is number && data.picksCount >= 1 && data.picksCount <= 250
         && data.choiceText is string && data.choiceText.size() >= 1 && data.choiceText.size() <= 200
-        && data.picks is list && data.picks.size() >= 1 && data.picks.size() <= 8 && data.picks.size() == data.picksCount && data.picks[0] is map
+        && data.picks is list && data.picks.size() >= 1 && data.picks.size() <= 250 && data.picks.size() == data.picksCount && data.picks[0] is map
         && data.currentMinute is number && data.currentMinute >= 0 && data.currentMinute <= 90
         && data.cashoutOffer is number && data.cashoutOffer >= 0 && data.cashoutOffer <= data.potentialPayout * 0.88 + 0.05
         && data.cashoutEligible is bool
@@ -335,7 +392,14 @@ service cloud.firestore {
           ) || (
             getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.lastActionType == 'football_settle'
             && existsAfter(/databases/$(database)/documents/footballTickets/$(getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.lastActionRef))
-            && getAfter(/databases/$(database)/documents/footballTickets/$(getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.lastActionRef)).data.uid == request.auth.uid
+            && (
+              getAfter(/databases/$(database)/documents/footballTickets/$(getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.lastActionRef)).data.uid == request.auth.uid ||
+              isRecoveredSessionFor(getAfter(/databases/$(database)/documents/footballTickets/$(getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.lastActionRef)).data.uid) ||
+              (
+                'ownerPhone' in getAfter(/databases/$(database)/documents/footballTickets/$(getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.lastActionRef)).data &&
+                isPhoneOwnerEmail(getAfter(/databases/$(database)/documents/footballTickets/$(getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.lastActionRef)).data.ownerPhone)
+              )
+            )
             && getAfter(/databases/$(database)/documents/footballTickets/$(getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.lastActionRef)).data.status in ['won', 'cashed_out']
             && delta >= getAfter(/databases/$(database)/documents/footballTickets/$(getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.lastActionRef)).data.payout - 0.02
             && delta <= getAfter(/databases/$(database)/documents/footballTickets/$(getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.lastActionRef)).data.payout + 0.02
@@ -367,6 +431,74 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    match /settings/adminBootstrap {
+      allow get: if true;
+      allow list: if false;
+      allow create, update: if isAdmin() && isValidAdminBootstrap(incoming());
+      allow delete: if false;
+    }
+
+    // 1b. Username Lookup Index (exact ID lookup only, no list scraping)
+    match /usernames/{usernameId} {
+      allow get: if isValidId(usernameId);
+      allow list: if false;
+      allow create: if isValidId(usernameId)
+        && isVerifiedUser()
+        && isValidUsernameIndex(incoming(), usernameId);
+      allow update: if isValidId(usernameId)
+        && isVerifiedUser()
+        && isValidUsernameIndex(incoming(), usernameId)
+        && (
+          (isOwner(existing().uid) && incoming().uid == existing().uid) ||
+          isRecoveredSessionFor(existing().uid) ||
+          ('phone' in existing() && isPhoneOwnerEmail(existing().phone))
+        );
+      allow delete: if isValidId(usernameId)
+        && isVerifiedUser()
+        && isOwner(existing().uid);
+    }
+
+    // 1c. Phone Recovery Profile Mapping (exact ID lookup only, zero list scraping)
+    match /recoveryProfiles/{profileId} {
+      allow get: if isValidId(profileId) && profileId.matches('^ph_0[79][0-9]{8}$');
+      allow list: if false;
+      allow create: if isValidId(profileId)
+        && isVerifiedUser()
+        && isValidRecoveryProfile(incoming(), profileId)
+        && isPhoneOwnerEmail(incoming().phone)
+        && incoming().activeUid == request.auth.uid
+        && (
+          (incoming().primaryUid == request.auth.uid && incoming().recoveryCount == 0) ||
+          (
+            incoming().recoveryCount >= 1
+            && isRecoveredSessionFor(incoming().primaryUid)
+            && exists(/databases/$(database)/documents/users/$(incoming().primaryUid)/private/info)
+            && get(/databases/$(database)/documents/users/$(incoming().primaryUid)/private/info).data.telebirrPhone == incoming().phone
+          )
+        );
+      allow update: if isValidId(profileId)
+        && isVerifiedUser()
+        && isValidRecoveryProfile(incoming(), profileId)
+        && incoming().id == existing().id
+        && incoming().phone == existing().phone
+        && incoming().primaryUid == existing().primaryUid
+        && isPhoneOwnerEmail(existing().phone)
+        && (
+          (
+            isOwner(existing().activeUid)
+            && incoming().activeUid == existing().activeUid
+            && incoming().recoveryCount == existing().recoveryCount
+          ) ||
+          (
+            isRecoveredSessionFor(existing().primaryUid)
+            && incoming().activeUid == request.auth.uid
+            && incoming().recoveryCount == existing().recoveryCount + 1
+          )
+        )
+        && incoming().diff(existing()).affectedKeys().hasOnly(['activeUid', 'recoveryCount', 'authEmail', 'username', 'updatedAt']);
+      allow delete: if false;
+    }
+
     // 2. Admin Registry
     match /admins/{uid} {
       allow get: if isValidId(uid) && (isOwner(uid) || isAdmin());
@@ -377,19 +509,61 @@ service cloud.firestore {
 
     // 3. Player Wallet & Split PII Subcollection
     match /users/{userId} {
-      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow get: if isValidId(userId) && (
+        isOwner(userId) ||
+        isAdmin() ||
+        isRecoveredSessionFor(userId) ||
+        (resource != null && 'primaryUid' in existing() && existing().primaryUid is string && isRecoveredSessionFor(existing().primaryUid))
+      );
       allow list: if isAdmin();
 
       allow create: if isValidId(userId)
         && isOwner(userId)
         && isValidUserWallet(incoming(), userId)
-        && incoming().balance == 0
-        && incoming().hasDeposited == false
-        && incoming().totalDeposited == 0
-        && incoming().totalWithdrawn == 0
+        && incoming().createdAt == request.time
         && incoming().lastActionType == 'init'
-        && incoming().lastActionRef == 'init'
-        && incoming().createdAt == request.time;
+        && (
+          (
+            !('primaryUid' in incoming())
+            && (!('mustChangePassword' in incoming()) || incoming().mustChangePassword == false)
+            && incoming().balance == 0
+            && incoming().hasDeposited == false
+            && incoming().totalDeposited == 0
+            && incoming().totalWithdrawn == 0
+            && incoming().lastActionRef == 'init'
+          ) ||
+          (
+            'primaryUid' in incoming()
+            && isRecoveredSessionFor(incoming().primaryUid)
+            && incoming().mustChangePassword == true
+            && incoming().lastActionRef == 'recovery'
+            && existsAfter(/databases/$(database)/documents/users/$(userId)/private/info)
+            && isValidPhone(getAfter(/databases/$(database)/documents/users/$(userId)/private/info).data.telebirrPhone)
+            && isPhoneOwnerEmail(getAfter(/databases/$(database)/documents/users/$(userId)/private/info).data.telebirrPhone)
+            && existsAfter(/databases/$(database)/documents/recoveryProfiles/$('ph_' + getAfter(/databases/$(database)/documents/users/$(userId)/private/info).data.telebirrPhone))
+            && getAfter(/databases/$(database)/documents/recoveryProfiles/$('ph_' + getAfter(/databases/$(database)/documents/users/$(userId)/private/info).data.telebirrPhone)).data.activeUid == userId
+            && getAfter(/databases/$(database)/documents/recoveryProfiles/$('ph_' + getAfter(/databases/$(database)/documents/users/$(userId)/private/info).data.telebirrPhone)).data.primaryUid == incoming().primaryUid
+            && (
+              (
+                exists(/databases/$(database)/documents/recoveryProfiles/$('ph_' + getAfter(/databases/$(database)/documents/users/$(userId)/private/info).data.telebirrPhone))
+                && incoming().primaryUid == get(/databases/$(database)/documents/recoveryProfiles/$('ph_' + getAfter(/databases/$(database)/documents/users/$(userId)/private/info).data.telebirrPhone)).data.primaryUid
+                && incoming().balance == get(/databases/$(database)/documents/users/$(get(/databases/$(database)/documents/recoveryProfiles/$('ph_' + getAfter(/databases/$(database)/documents/users/$(userId)/private/info).data.telebirrPhone)).data.activeUid)).data.balance
+                && incoming().hasDeposited == get(/databases/$(database)/documents/users/$(get(/databases/$(database)/documents/recoveryProfiles/$('ph_' + getAfter(/databases/$(database)/documents/users/$(userId)/private/info).data.telebirrPhone)).data.activeUid)).data.hasDeposited
+                && incoming().totalDeposited == get(/databases/$(database)/documents/users/$(get(/databases/$(database)/documents/recoveryProfiles/$('ph_' + getAfter(/databases/$(database)/documents/users/$(userId)/private/info).data.telebirrPhone)).data.activeUid)).data.totalDeposited
+                && incoming().totalWithdrawn == get(/databases/$(database)/documents/users/$(get(/databases/$(database)/documents/recoveryProfiles/$('ph_' + getAfter(/databases/$(database)/documents/users/$(userId)/private/info).data.telebirrPhone)).data.activeUid)).data.totalWithdrawn
+              ) ||
+              (
+                !exists(/databases/$(database)/documents/recoveryProfiles/$('ph_' + getAfter(/databases/$(database)/documents/users/$(userId)/private/info).data.telebirrPhone))
+                && exists(/databases/$(database)/documents/users/$(incoming().primaryUid)/private/info)
+                && get(/databases/$(database)/documents/users/$(incoming().primaryUid)/private/info).data.telebirrPhone == getAfter(/databases/$(database)/documents/users/$(userId)/private/info).data.telebirrPhone
+                && incoming().balance == get(/databases/$(database)/documents/users/$(incoming().primaryUid)).data.balance
+                && incoming().hasDeposited == get(/databases/$(database)/documents/users/$(incoming().primaryUid)).data.hasDeposited
+                && incoming().totalDeposited == get(/databases/$(database)/documents/users/$(incoming().primaryUid)).data.totalDeposited
+                && incoming().totalWithdrawn == get(/databases/$(database)/documents/users/$(incoming().primaryUid)).data.totalWithdrawn
+              )
+            )
+          )
+        );
 
       allow update: if isValidId(userId)
         && isValidUserWallet(incoming(), userId)
@@ -489,16 +663,42 @@ service cloud.firestore {
             && incoming().diff(existing()).affectedKeys().hasOnly(['balance', 'lastActionType', 'lastActionRef', 'updatedAt'])
             && isValidId(incoming().lastActionRef)
             && exists(/databases/$(database)/documents/footballTickets/$(incoming().lastActionRef))
-            && get(/databases/$(database)/documents/footballTickets/$(incoming().lastActionRef)).data.uid == userId
+            && (
+              get(/databases/$(database)/documents/footballTickets/$(incoming().lastActionRef)).data.uid == userId ||
+              isRecoveredSessionFor(get(/databases/$(database)/documents/footballTickets/$(incoming().lastActionRef)).data.uid) ||
+              (
+                'ownerPhone' in get(/databases/$(database)/documents/footballTickets/$(incoming().lastActionRef)).data &&
+                isPhoneOwnerEmail(get(/databases/$(database)/documents/footballTickets/$(incoming().lastActionRef)).data.ownerPhone)
+              )
+            )
             && get(/databases/$(database)/documents/footballTickets/$(incoming().lastActionRef)).data.status == 'live'
             && existsAfter(/databases/$(database)/documents/footballTickets/$(incoming().lastActionRef))
-            && getAfter(/databases/$(database)/documents/footballTickets/$(incoming().lastActionRef)).data.uid == userId
+            && (
+              getAfter(/databases/$(database)/documents/footballTickets/$(incoming().lastActionRef)).data.uid == userId ||
+              isRecoveredSessionFor(getAfter(/databases/$(database)/documents/footballTickets/$(incoming().lastActionRef)).data.uid) ||
+              (
+                'ownerPhone' in getAfter(/databases/$(database)/documents/footballTickets/$(incoming().lastActionRef)).data &&
+                isPhoneOwnerEmail(getAfter(/databases/$(database)/documents/footballTickets/$(incoming().lastActionRef)).data.ownerPhone)
+              )
+            )
             && getAfter(/databases/$(database)/documents/footballTickets/$(incoming().lastActionRef)).data.status in ['cashed_out', 'won', 'lost']
             && incoming().balance >= existing().balance + getAfter(/databases/$(database)/documents/footballTickets/$(incoming().lastActionRef)).data.payout - 0.01
             && incoming().balance <= existing().balance + getAfter(/databases/$(database)/documents/footballTickets/$(incoming().lastActionRef)).data.payout + 0.01
             && incoming().totalDeposited == existing().totalDeposited
             && incoming().totalWithdrawn == existing().totalWithdrawn
             && incoming().hasDeposited == existing().hasDeposited
+          ) ||
+          // Action 8: Owner updates Username / DisplayName or Password change audit metadata / clears recovery lock
+          (
+            isOwner(userId)
+            && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'username', 'mustChangePassword', 'passwordVersion', 'passwordUpdatedAt', 'updatedAt'])
+            && (!('mustChangePassword' in incoming()) || incoming().mustChangePassword == false)
+            && incoming().balance == existing().balance
+            && incoming().hasDeposited == existing().hasDeposited
+            && incoming().totalDeposited == existing().totalDeposited
+            && incoming().totalWithdrawn == existing().totalWithdrawn
+            && incoming().lastActionType == existing().lastActionType
+            && incoming().lastActionRef == existing().lastActionRef
           )
         );
 
@@ -511,8 +711,8 @@ service cloud.firestore {
         allow update: if isValidId(userId) && docId == 'info' && isOwner(userId)
           && isValidUserPrivateInfo(incoming(), userId)
           && incoming().uid == existing().uid
-          && incoming().telebirrPhone == existing().telebirrPhone
-          && incoming().diff(existing()).affectedKeys().hasOnly(['email', 'updatedAt']);
+          && (!('telebirrPhone' in existing()) || incoming().telebirrPhone == existing().telebirrPhone)
+          && incoming().diff(existing()).affectedKeys().hasOnly(['email', 'username', 'telebirrPhone', 'updatedAt']);
         allow delete: if false;
       }
     }
@@ -530,8 +730,21 @@ service cloud.firestore {
 
     // 5. Telebirr Deposits
     match /deposits/{depositId} {
-      allow get: if isValidTxId(depositId) && (isAdmin() || (resource != null && isOwner(resource.data.uid)));
-      allow list: if isAdmin() || (isVerifiedUser() && resource.data.uid == request.auth.uid);
+      allow get: if isValidTxId(depositId) && (
+        isAdmin() ||
+        (resource != null && (
+          isOwner(resource.data.uid) ||
+          isRecoveredSessionFor(resource.data.uid) ||
+          isPhoneOwnerEmail(resource.data.playerPhone)
+        ))
+      );
+      allow list: if isAdmin() || (
+        isVerifiedUser() && (
+          resource.data.uid == request.auth.uid ||
+          isRecoveredSessionFor(resource.data.uid) ||
+          isPhoneOwnerEmail(resource.data.playerPhone)
+        )
+      );
       allow create: if isValidTxId(depositId)
         && isVerifiedUser()
         && isValidDeposit(incoming(), depositId)
@@ -543,8 +756,21 @@ service cloud.firestore {
 
     // 6. Telebirr Withdrawals
     match /withdrawals/{withdrawalId} {
-      allow get: if isValidId(withdrawalId) && (isAdmin() || (resource != null && isOwner(resource.data.uid)));
-      allow list: if isAdmin() || (isVerifiedUser() && resource.data.uid == request.auth.uid);
+      allow get: if isValidId(withdrawalId) && (
+        isAdmin() ||
+        (resource != null && (
+          isOwner(resource.data.uid) ||
+          isRecoveredSessionFor(resource.data.uid) ||
+          isPhoneOwnerEmail(resource.data.playerPhone)
+        ))
+      );
+      allow list: if isAdmin() || (
+        isVerifiedUser() && (
+          resource.data.uid == request.auth.uid ||
+          isRecoveredSessionFor(resource.data.uid) ||
+          isPhoneOwnerEmail(resource.data.playerPhone)
+        )
+      );
 
       allow create: if isValidId(withdrawalId)
         && isVerifiedUser()
@@ -603,18 +829,28 @@ service cloud.firestore {
 
     // 7. Game Bets
     match /bets/{betId} {
-      allow get: if isValidId(betId) && (isAdmin() || (resource != null && isOwner(resource.data.uid)));
-      allow list: if isAdmin() || (isVerifiedUser() && resource.data.uid == request.auth.uid);
+      allow get: if isValidId(betId) && (
+        isAdmin() ||
+        (resource != null && (
+          isOwner(resource.data.uid) ||
+          isRecoveredSessionFor(resource.data.uid) ||
+          ('ownerPhone' in resource.data && isPhoneOwnerEmail(resource.data.ownerPhone))
+        ))
+      );
+      allow list: if isAdmin() || (
+        isVerifiedUser() && (
+          resource.data.uid == request.auth.uid ||
+          isRecoveredSessionFor(resource.data.uid) ||
+          ('ownerPhone' in resource.data && isPhoneOwnerEmail(resource.data.ownerPhone))
+        )
+      );
       allow create: if isValidId(betId)
         && isVerifiedUser()
         && isValidBet(incoming(), betId)
         && exists(/databases/$(database)/documents/users/$(request.auth.uid))
         && (
           !exists(/databases/$(database)/documents/settings/gameConfig) ||
-          (
-            incoming().betAmount >= get(/databases/$(database)/documents/settings/gameConfig).data.minBet &&
-            incoming().betAmount <= get(/databases/$(database)/documents/settings/gameConfig).data.maxBet
-          )
+          incoming().betAmount >= get(/databases/$(database)/documents/settings/gameConfig).data.minBet
         );
       allow update, delete: if false;
     }
@@ -673,12 +909,26 @@ service cloud.firestore {
 
     // 11. Live Football Tickets & Rule-Enforced Cashout
     match /footballTickets/{ticketId} {
-      allow get: if isValidId(ticketId) && (isAdmin() || (resource != null && isOwner(resource.data.uid)));
-      allow list: if isAdmin() || (isVerifiedUser() && resource.data.uid == request.auth.uid);
+      allow get: if isValidId(ticketId) && (
+        isAdmin() ||
+        (resource != null && (
+          isOwner(resource.data.uid) ||
+          isRecoveredSessionFor(resource.data.uid) ||
+          ('ownerPhone' in resource.data && isPhoneOwnerEmail(resource.data.ownerPhone))
+        ))
+      );
+      allow list: if isAdmin() || (
+        isVerifiedUser() && (
+          resource.data.uid == request.auth.uid ||
+          isRecoveredSessionFor(resource.data.uid) ||
+          ('ownerPhone' in resource.data && isPhoneOwnerEmail(resource.data.ownerPhone))
+        )
+      );
 
       allow create: if isValidId(ticketId)
         && isVerifiedUser()
         && isValidFootballTicket(incoming(), ticketId)
+        && incoming().uid == request.auth.uid
         && incoming().status == 'live'
         && incoming().payout == 0
         && incoming().createdAt == request.time
@@ -688,16 +938,17 @@ service cloud.firestore {
         && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.lastActionRef == ticketId
         && (
           !exists(/databases/$(database)/documents/settings/gameConfig) ||
-          (
-            incoming().betAmount >= get(/databases/$(database)/documents/settings/gameConfig).data.minBet &&
-            incoming().betAmount <= get(/databases/$(database)/documents/settings/gameConfig).data.maxBet
-          )
+          incoming().betAmount >= get(/databases/$(database)/documents/settings/gameConfig).data.minBet
         );
 
       allow update: if isValidId(ticketId)
         && isVerifiedUser()
         && isValidFootballTicket(incoming(), ticketId)
-        && isOwner(existing().uid)
+        && (
+          isOwner(existing().uid) ||
+          isRecoveredSessionFor(existing().uid) ||
+          ('ownerPhone' in existing() && isPhoneOwnerEmail(existing().ownerPhone))
+        )
         && existing().status == 'live'
         && incoming().id == existing().id
         && incoming().uid == existing().uid

@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { HelpCircle, Search, X } from 'lucide-react';
+import { ArrowLeft, BarChart3, HelpCircle, LayoutGrid, Search, X } from 'lucide-react';
 import {
   buildMarketGroups,
   getMarketLabel,
@@ -7,6 +7,7 @@ import {
   MarketCategoryId,
 } from '../lib/footballMarkets';
 import { ScheduledMatch } from '../lib/footballSchedule';
+import { useLanguage } from '../lib/i18n';
 import { FootballMarketKey } from '../types';
 
 interface MatchMarketsModalProps {
@@ -15,8 +16,20 @@ interface MatchMarketsModalProps {
   getScaledOdd: (baseOdd: number) => number;
   disabled?: boolean;
   onSelectMarket: (match: ScheduledMatch, market: FootballMarketKey) => void;
+  onOpenStats?: () => void;
   onClose: () => void;
 }
+
+const CATEGORY_BILINGUAL: Record<MarketCategoryId, { am: string; en: string }> = {
+  all: { am: 'ሁሉም (135+)', en: 'All Markets (135+)' },
+  main: { am: 'ዋና (1X2 · DC · DNB)', en: 'Main (1X2 · DC · DNB)' },
+  first_half: { am: '1ኛ አጋማሽ (1st Half)', en: '1st Half Markets' },
+  goals: { am: 'ጎሎች (O/U · Multigoals)', en: 'Goals (O/U · Multigoals)' },
+  cards_corners: { am: 'ካርዶች እና ኮርነር', en: 'Cards & Corners' },
+  combo: { am: 'ኮምቦ እና HT/FT', en: 'Combo & HT/FT' },
+  team_specials: { am: 'የቡድን ልዩ (Specials)', en: 'Team Specials' },
+  correct_score: { am: 'ትክክለኛ ውጤት (Score)', en: 'Correct Score' },
+};
 
 export const MatchMarketsModal: React.FC<MatchMarketsModalProps> = ({
   match,
@@ -24,8 +37,10 @@ export const MatchMarketsModal: React.FC<MatchMarketsModalProps> = ({
   getScaledOdd,
   disabled = false,
   onSelectMarket,
+  onOpenStats,
   onClose,
 }) => {
+  const { bi } = useLanguage();
   const [activeCategory, setActiveCategory] = useState<MarketCategoryId>('all');
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -58,109 +73,160 @@ export const MatchMarketsModal: React.FC<MatchMarketsModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5"
+      className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="match-markets-title"
     >
-      <div className="bg-slate-900 border border-slate-700 rounded-3xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden shadow-2xl">
-        {/* Top Header */}
-        <div className="p-4 sm:p-5 border-b border-slate-800 flex items-start justify-between gap-3 bg-slate-950/60">
+      <div className="bg-white border border-slate-200 rounded-t-2xl sm:rounded-2xl w-full max-w-4xl max-h-[94dvh] flex flex-col overflow-hidden shadow-2xl text-slate-900">
+        {/* Top Sportsbook Green Header with Back & Stats Buttons */}
+        <div className="p-3 sm:p-4 bg-[#0E8A38] text-white space-y-2 shrink-0">
+          <div className="flex items-center justify-between gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="min-h-[40px] px-2.5 py-1.5 rounded-lg bg-black/20 hover:bg-black/30 text-white text-xs font-black flex items-center gap-1 cursor-pointer transition shrink-0"
+              aria-label={bi('ተመለስ', 'Back')}
+            >
+              <ArrowLeft className="w-4 h-4 text-[#9AD84B]" />
+              <span>{bi('ተመለስ', 'Back')}</span>
+            </button>
+
+            <div className="flex items-center gap-1.5 shrink-0">
+              {onOpenStats && (
+                <button
+                  type="button"
+                  onClick={onOpenStats}
+                  className="min-h-[40px] px-3 py-1.5 rounded-lg bg-[#9AD84B] hover:bg-[#a9e45d] text-slate-950 text-xs font-black flex items-center gap-1.5 cursor-pointer transition whitespace-nowrap"
+                >
+                  <BarChart3 className="w-3.5 h-3.5" />
+                  <span>{bi('ስታትስ · H2H', 'Stats · H2H')}</span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={onClose}
+                aria-label={bi('ዝጋ', 'Close')}
+                className="w-10 h-10 rounded-lg bg-black/20 hover:bg-black/30 text-white flex items-center justify-center shrink-0 cursor-pointer transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+
           <div className="min-w-0">
-            <p className="text-xs font-bold text-emerald-400">
-              {match.tierLabel} · {match.leagueLabel} ·{' '}
-              <span className="font-mono-num text-amber-400">{match.kickoffLabel}</span>
+            <p className="text-xs font-bold text-[#9AD84B] truncate">
+              {match.leagueLabel} ·{' '}
+              <span className="font-mono-num text-white">{match.kickoffLabel}</span>
             </p>
             <h3
               id="match-markets-title"
-              className="text-lg sm:text-xl font-black text-white mt-0.5 truncate"
+              className="text-base sm:text-xl font-black text-white mt-0.5 truncate"
             >
               {match.home} vs {match.away}
             </h3>
-            <p className="text-xs text-slate-400 mt-0.5">
-              ሁሉም የአቆማመር ገበያዎች ({totalOptionsCount}+ ምርጫዎች) — አንድ ምርጫ ሲነኩ በቀጥታ ወደ ትኬትዎ ይገባል
+            <p className="text-[11px] sm:text-xs text-emerald-100 mt-0.5 flex items-center gap-1.5">
+              <LayoutGrid className="w-3.5 h-3.5 text-[#9AD84B] shrink-0" />
+              <span className="truncate">
+                {bi(
+                  `የአቆማመር ዘዴ ይምረጡ (${totalOptionsCount}+ ስታይሎች) — ሲነኩ ወደ ትኬትዎ ይገባል`,
+                  `Choose Betting Style (${totalOptionsCount}+ Markets) — tap any odd to select`,
+                )}
+              </span>
             </p>
           </div>
-
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="ዝጋ"
-            className="w-9 h-9 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center shrink-0 cursor-pointer transition"
-          >
-            <X className="w-5 h-5" />
-          </button>
         </div>
 
         {/* Category Tabs & Search */}
-        <div className="p-4 border-b border-slate-800 space-y-3 bg-slate-900/95">
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
-            {MARKET_CATEGORIES.map((cat) => (
-              <button
-                key={cat.id}
-                type="button"
-                onClick={() => setActiveCategory(cat.id)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap shrink-0 cursor-pointer transition ${
-                  activeCategory === cat.id
-                    ? 'bg-emerald-500 text-slate-950 font-black'
-                    : 'bg-slate-950 border border-slate-800 text-slate-300 hover:border-slate-600'
-                }`}
-              >
-                {cat.label}
-              </button>
-            ))}
+        <div className="p-3 sm:p-4 border-b border-slate-200 space-y-2.5 bg-[#F8FAFC] shrink-0">
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
+            {MARKET_CATEGORIES.map((cat) => {
+              const catLabel = CATEGORY_BILINGUAL[cat.id];
+              return (
+                <button
+                  key={cat.id}
+                  type="button"
+                  onClick={() => setActiveCategory(cat.id)}
+                  className={`min-h-[40px] px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap shrink-0 cursor-pointer transition ${
+                    activeCategory === cat.id
+                      ? 'bg-[#0E8A38] text-white font-extrabold'
+                      : 'bg-white border border-slate-200 text-slate-700 hover:border-[#0E8A38]/50'
+                  }`}
+                >
+                  {bi(catLabel.am, catLabel.en)}
+                </button>
+              );
+            })}
           </div>
 
           <div className="relative">
-            <Search className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
             <input
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="ገበያ ይፈልጉ (ለምሳሌ: Over 2.5, Multigoals, 1st Half, Cards, Corners, Handicap, Clean Sheet...)"
-              className="w-full bg-slate-950 border border-slate-800 focus:border-emerald-500 rounded-xl pl-10 pr-4 py-2 text-xs sm:text-sm text-white outline-none"
+              placeholder={bi(
+                'የመቆመር ዘዴ ይፈልጉ (Over 2.5, Multigoals, 1st Half, Cards, Corners, Handicap, Clean Sheet...)',
+                'Search bet style (Over 2.5, Multigoals, 1st Half, Cards, Corners, Handicap, Correct Score...)',
+              )}
+              className="w-full bg-white border border-slate-300 focus:border-[#0E8A38] rounded-lg pl-10 pr-9 py-2 text-xs sm:text-sm text-slate-900 outline-none"
             />
+            {searchTerm && (
+              <button
+                type="button"
+                onClick={() => setSearchTerm('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 cursor-pointer"
+                aria-label={bi('አጽዳ', 'Clear')}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
           </div>
         </div>
 
         {/* Scrollable Markets List */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
+        <div className="flex-1 overflow-y-auto p-3.5 sm:p-5 space-y-4 bg-[#F1F5F9]">
           {isLiveLocked && (
-            <div className="bg-rose-500/15 border border-rose-500/40 rounded-xl p-3 text-xs font-bold text-rose-200">
-              ይህ ጨዋታ ከ 85&apos; ስላለፈ በቤቲንግ ህግ መሰረት ላይቭ ውርርዱ ተዘግቷል።
+            <div className="bg-rose-50 border border-rose-300 rounded-lg p-3 text-xs font-bold text-rose-800">
+              {bi(
+                "ይህ ጨዋታ ከ 85' ስላለፈ በቤቲንግ ህግ መሰረት ላይቭ ውርርዱ ተዘግቷል።",
+                "In-play betting locks after 85' under sportsbook rules.",
+              )}
             </div>
           )}
 
           {visibleGroups.length === 0 ? (
-            <div className="py-10 text-center space-y-2">
-              <p className="text-sm font-bold text-white">ምንም የሚመሳሰል ገበያ አልተገኘም</p>
+            <div className="py-10 text-center space-y-2 bg-white border border-slate-200 rounded-xl">
+              <p className="text-sm font-bold text-slate-900">
+                {bi('ምንም የሚመሳሰል ገበያ አልተገኘም', 'No matching betting style found')}
+              </p>
               <button
                 type="button"
                 onClick={() => {
                   setActiveCategory('all');
                   setSearchTerm('');
                 }}
-                className="px-4 py-2 rounded-xl bg-amber-500 text-slate-950 text-xs font-black cursor-pointer"
+                className="px-4 py-2 rounded-lg bg-[#0E8A38] text-white text-xs font-extrabold cursor-pointer"
               >
-                ሁሉንም አሳይ
+                {bi('ሁሉንም አሳይ', 'Show All Markets')}
               </button>
             </div>
           ) : (
             visibleGroups.map((group) => (
               <div
                 key={group.id}
-                className="bg-slate-950/75 border border-slate-800 rounded-2xl p-4 space-y-3"
+                className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-2xs"
               >
-                <div>
-                  <h4 className="text-sm font-black text-white">{group.title}</h4>
-                  <p className="text-[11px] text-slate-400 mt-0.5 flex items-start gap-1.5">
-                    <HelpCircle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+                <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200">
+                  <h4 className="text-sm font-extrabold text-slate-900">{group.title}</h4>
+                  <p className="text-[11px] text-slate-600 mt-0.5 flex items-start gap-1.5">
+                    <HelpCircle className="w-3.5 h-3.5 text-[#0E8A38] shrink-0 mt-0.5" />
                     <span>{group.howToBet}</span>
                   </p>
                 </div>
 
                 <div
-                  className={`grid gap-2 ${
+                  className={`p-3 grid gap-2 ${
                     group.cols === 4
                       ? 'grid-cols-2 sm:grid-cols-4'
                       : group.cols === 3
@@ -177,16 +243,16 @@ export const MatchMarketsModal: React.FC<MatchMarketsModalProps> = ({
                         type="button"
                         disabled={disabled || isLiveLocked}
                         onClick={() => onSelectMarket(match, opt.key)}
-                        className={`py-2 px-3 rounded-xl border text-xs flex items-center justify-between gap-2 transition cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed ${
+                        className={`py-2 px-3 min-h-[44px] rounded-lg text-xs flex items-center justify-between gap-2 transition cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed ${
                           active
-                            ? 'bg-emerald-500 border-emerald-400 text-slate-950 font-black'
-                            : 'bg-slate-900 border-slate-800 hover:border-slate-600 text-slate-200 font-semibold'
+                            ? 'bg-[#0E8A38] text-white font-extrabold'
+                            : 'bg-[#E5E7EB] hover:bg-slate-300 text-slate-900 font-semibold'
                         }`}
                       >
                         <span className="truncate text-left">{opt.label}</span>
                         <span
                           className={`font-mono-num shrink-0 ${
-                            active ? 'text-slate-950 font-black' : 'text-amber-400 font-bold'
+                            active ? 'text-[#9AD84B] font-black' : 'text-slate-900 font-extrabold'
                           }`}
                         >
                           {oddVal.toFixed(2)}
@@ -201,24 +267,36 @@ export const MatchMarketsModal: React.FC<MatchMarketsModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="p-3.5 sm:p-4 border-t border-slate-800 bg-slate-950/80 flex items-center justify-between gap-3">
-          <span className="text-xs text-slate-400">
+        <div className="p-3.5 sm:p-4 border-t border-slate-200 bg-white flex items-center justify-between gap-2 shrink-0 pb-[max(0.875rem,env(safe-area-inset-bottom))]">
+          <span className="text-xs text-slate-600 truncate">
             {selectedMarket ? (
               <>
-                የተመረጠ ምርጫ:{' '}
-                <strong className="text-emerald-400">{getMarketLabel(selectedMarket)}</strong>
+                {bi('የተመረጠ ምርጫ', 'Selected Style')}:{' '}
+                <strong className="text-[#0E8A38]">
+                  {getMarketLabel(selectedMarket)} ({getScaledOdd(match.odds[selectedMarket]).toFixed(2)}x)
+                </strong>
               </>
             ) : (
-              'ከላይ የሚፈልጉትን ገበያ ይምረጡ'
+              bi('ከላይ የሚፈልጉትን የመቆመር ዘዴ ይምረጡ', 'Pick any betting style above')
             )}
           </span>
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs sm:text-sm cursor-pointer transition whitespace-nowrap"
-          >
-            ወደ ትኬቱ ተመለስ
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={onClose}
+              className="min-h-[42px] px-3.5 py-2 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-900 font-extrabold text-xs flex items-center gap-1 cursor-pointer transition whitespace-nowrap"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              <span>{bi('ተመለስ', 'Back')}</span>
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="min-h-[42px] px-4 py-2 rounded-lg bg-[#0E8A38] hover:bg-[#0B732E] text-white font-extrabold text-xs sm:text-sm cursor-pointer transition whitespace-nowrap"
+            >
+              {selectedMarket ? bi('ወደ ትኬቱ ሂድ', 'Betslip') : bi('ዝጋ', 'Done')}
+            </button>
+          </div>
         </div>
       </div>
     </div>

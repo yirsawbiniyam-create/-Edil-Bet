@@ -26,6 +26,7 @@ if (typeof window !== 'undefined' && firebaseConfig.measurementId) {
 }
 
 export const BOOTSTRAP_ADMIN_EMAIL = 'yirsawbiniyam@gmail.com';
+export const ADMIN_AUTH_EMAIL = 'owner.admin@edilbet.app';
 
 export enum OperationType {
   CREATE = 'create',

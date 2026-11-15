@@ -41,6 +41,7 @@ interface AdminPanelProps {
   deposits: DepositRecord[];
   ledger: LedgerEntry[];
   onNotify: (msg: string, type: 'success' | 'error' | 'info') => void;
+  onOpenAccountSettings?: () => void;
 }
 
 function compressImageToLogoDataUrl(file: File): Promise<string> {
@@ -93,6 +94,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   deposits,
   ledger,
   onNotify,
+  onOpenAccountSettings,
 }) => {
   const [depositPhoneInput, setDepositPhoneInput] = useState(settings?.depositPhone || '');
   const [withdrawalPhoneInput, setWithdrawalPhoneInput] = useState(
@@ -379,6 +381,30 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
   return (
     <div className="space-y-6">
+      {onOpenAccountSettings && (
+        <div className="bg-slate-900 border border-emerald-500/30 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <KeyRound className="w-5 h-5 text-emerald-400 shrink-0" />
+            <div>
+              <h2 className="text-sm font-extrabold text-white">
+                የአድሚን ዩዘርኔም እና ፓስዎርድ ማስተካከያ (Firestore Sync)
+              </h2>
+              <p className="text-xs text-slate-400">
+                ከፈለጉ የመግቢያ ዩዘርኔምዎን እና ፓስዎርድዎን እዚህ በቀጥታ መቀየር ይችላሉ
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onOpenAccountSettings}
+            className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs flex items-center gap-1.5 cursor-pointer transition whitespace-nowrap"
+          >
+            <KeyRound className="w-4 h-4" />
+            <span>ዩዘርኔም እና ፓስዎርድ ቀይር</span>
+          </button>
+        </div>
+      )}
+
       {/* Financial KPI Summary Row */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4">
@@ -637,7 +663,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 <input
                   type="number"
                   min={1}
-                  max={500000}
+                  max={10000000}
                   step={1}
                   required
                   value={oddsForm.maxBet}
@@ -655,7 +681,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 <input
                   type="number"
                   min={5}
-                  max={500}
+                  max={1000000}
                   step={5}
                   required
                   value={oddsForm.footballMaxOdds}

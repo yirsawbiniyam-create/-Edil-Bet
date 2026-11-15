@@ -22,6 +22,7 @@ export interface ScheduledMatch {
   tier: LeagueTier;
   tierLabel: string;
   timeframe: Exclude<TimeframeBucket, 'all'>;
+  dateKey?: string;
   kickoffLabel: string;
   scheduleGroupLabel: string;
   isLive: boolean;
@@ -106,7 +107,7 @@ function makeOdds(
 }
 
 export function buildFootballSchedule(now = new Date()): ScheduledMatch[] {
-  return [
+  return assignFallbackDateKeys([
     // ================= LIVE NOW (IN-PLAY) =================
     {
       id: 'live_eth_1',
@@ -589,7 +590,29 @@ export function buildFootballSchedule(now = new Date()): ScheduledMatch[] {
       awayCode: 'CIV',
       odds: makeOdds(2.15, 3.15, 3.4, 2.05, 1.72, 1.88, 1.84),
     },
-  ];
+  ], now);
+}
+
+export interface DaySlotOption {
+  dateKey: string;
+  label: string;
+  shortLabel: string;
+}
+
+export function getNext7DaysEAT(now = new Date()): DaySlotOption[] {
+  const daysEth = ['እሁድ', 'ሰኞ', 'ማክሰኞ', 'ረቡዕ', 'ሐሙስ', 'አርብ', 'ቅዳሜ'];
+  return Array.from({ length: 7 }, (_, offset) => {
+    const eat = new Date(now.getTime() + offset * 86400_000 + 3 * 3600_000);
+    const dateKey = eat.toISOString().slice(0, 10);
+    const dd = String(eat.getUTCDate()).padStart(2, '0');
+    const mm = String(eat.getUTCMonth() + 1).padStart(2, '0');
+    const dayName = offset === 0 ? 'ዛሬ' : offset === 1 ? 'ነገ' : daysEth[eat.getUTCDay()];
+    return {
+      dateKey,
+      label: `${dayName} (${dd}/${mm})`,
+      shortLabel: offset === 0 ? 'ዛሬ' : offset === 1 ? 'ነገ' : `${dayName} ${dd}/${mm}`,
+    };
+  });
 }
 
 export interface ExternalMatchPayload {
@@ -599,6 +622,7 @@ export interface ExternalMatchPayload {
   tier: LeagueTier;
   tierLabel: string;
   timeframe: Exclude<TimeframeBucket, 'all'>;
+  dateKey?: string;
   kickoffIso: string;
   kickoffLabel: string;
   scheduleGroupLabel: string;
@@ -627,12 +651,29 @@ export interface ExternalMatchPayload {
 export interface BeSoccerScheduleResult {
   matches: ScheduledMatch[];
   syncedCount: number;
+  daysCovered: number;
   source: string;
   fetchedAt: string;
 }
 
+function assignFallbackDateKeys(matches: ScheduledMatch[], now = new Date()): ScheduledMatch[] {
+  const days = getNext7DaysEAT(now);
+  return matches.map((m, idx) => {
+    if (m.dateKey) return m;
+    if (m.timeframe === 'live' || m.timeframe === 'hourly' || m.timeframe === 'daily') {
+      return { ...m, dateKey: days[0].dateKey };
+    }
+    if (m.timeframe === 'weekly') {
+      const slot = 1 + (idx % 6);
+      return { ...m, dateKey: days[slot].dateKey };
+    }
+    return { ...m, dateKey: days[6].dateKey };
+  });
+}
+
 export async function fetchBeSoccerSchedule(forceRefresh = false): Promise<BeSoccerScheduleResult> {
-  const localSchedule = buildFootballSchedule(new Date());
+  const now = new Date();
+  const localSchedule = assignFallbackDateKeys(buildFootballSchedule(now), now);
   const url = forceRefresh ? '/api/besoccer/schedule?force=1' : '/api/besoccer/schedule';
   const resp = await fetch(url);
   if (!resp.ok) {
@@ -640,6 +681,7 @@ export async function fetchBeSoccerSchedule(forceRefresh = false): Promise<BeSoc
   }
   const data = (await resp.json()) as {
     matches?: ExternalMatchPayload[];
+    daysCovered?: number;
     source?: string;
     fetchedAt?: string;
   };
@@ -649,6 +691,7 @@ export async function fetchBeSoccerSchedule(forceRefresh = false): Promise<BeSoc
     return {
       matches: localSchedule,
       syncedCount: 0,
+      daysCovered: 7,
       source: 'local',
       fetchedAt: new Date().toISOString(),
     };
@@ -661,6 +704,7 @@ export async function fetchBeSoccerSchedule(forceRefresh = false): Promise<BeSoc
     tier: m.tier,
     tierLabel: m.tierLabel,
     timeframe: m.timeframe,
+    dateKey: m.dateKey || (m.kickoffIso ? m.kickoffIso.slice(0, 10) : getNext7DaysEAT(now)[0].dateKey),
     kickoffLabel: m.kickoffLabel,
     scheduleGroupLabel: m.scheduleGroupLabel,
     isLive: m.isLive,
@@ -687,7 +731,6 @@ export async function fetchBeSoccerSchedule(forceRefresh = false): Promise<BeSoc
     ),
   }));
 
-  // Keep Ethiopian Premier League matches & fill any empty timeframe buckets alongside live BeSoccer-synced program
   const ethiopiaMatches = localSchedule.filter((m) => m.league === 'ethiopia');
   const presentTimeframes = new Set(converted.map((m) => m.timeframe));
   const extraLocal = localSchedule.filter(
@@ -699,6 +742,7 @@ export async function fetchBeSoccerSchedule(forceRefresh = false): Promise<BeSoc
   return {
     matches: merged,
     syncedCount: converted.length,
+    daysCovered: data.daysCovered ?? 7,
     source: data.source || 'besoccer-sync',
     fetchedAt: data.fetchedAt || new Date().toISOString(),
   };

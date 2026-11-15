@@ -93,7 +93,7 @@
         },
         "maxBet": {
           "type": "number",
-          "description": "Maximum wager per round in ETB (minBet - 500000)."
+          "description": "Maximum wager per round in ETB (up to 10000000)."
         },
         "houseWinRate": {
           "type": "number",
@@ -129,7 +129,7 @@
         },
         "footballMaxOdds": {
           "type": "number",
-          "description": "Maximum combined accumulator multiplier for football tickets (5 - 500)."
+          "description": "Maximum combined accumulator multiplier for football tickets (5 - 1000000)."
         },
         "updatedBy": {
           "type": "string",
@@ -192,6 +192,26 @@
           "type": "string",
           "maxLength": 128
         },
+        "username": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "primaryUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "mustChangePassword": {
+          "type": "boolean"
+        },
+        "passwordVersion": {
+          "type": "number"
+        },
+        "passwordUpdatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time"
@@ -216,7 +236,7 @@
     },
     "UserPrivateInfo": {
       "title": "UserPrivateInfo",
-      "description": "Isolated PII for a player including email and registered deposit Telebirr phone number.",
+      "description": "Isolated PII for a player or admin including email, username, and Telebirr phone number.",
       "type": "object",
       "properties": {
         "uid": {
@@ -227,6 +247,11 @@
         "email": {
           "type": "string",
           "maxLength": 150
+        },
+        "username": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80
         },
         "telebirrPhone": {
           "type": "string",
@@ -239,7 +264,7 @@
           "format": "date-time"
         }
       },
-      "required": ["uid", "email", "telebirrPhone", "updatedAt"]
+      "required": ["uid", "email", "updatedAt"]
     },
     "UsedTxId": {
       "title": "UsedTxId",
@@ -427,6 +452,12 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 128
+        },
+        "ownerPhone": {
+          "type": "string",
+          "pattern": "^0[79][0-9]{8}$",
+          "minLength": 10,
+          "maxLength": 10
         },
         "gameType": {
           "type": "string",
@@ -646,6 +677,12 @@
       "properties": {
         "id": { "type": "string", "minLength": 1, "maxLength": 128 },
         "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "ownerPhone": {
+          "type": "string",
+          "pattern": "^0[79][0-9]{8}$",
+          "minLength": 10,
+          "maxLength": 10
+        },
         "betAmount": { "type": "number" },
         "totalOdds": { "type": "number" },
         "potentialPayout": { "type": "number" },
@@ -742,6 +779,54 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "UsernameIndex": {
+      "title": "UsernameIndex",
+      "description": "Deterministic username-to-authEmail lookup entry enabling custom username login and username updates.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 3, "maxLength": 128 },
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "username": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "authEmail": { "type": "string", "minLength": 5, "maxLength": 150 },
+        "phone": {
+          "type": "string",
+          "pattern": "^0[79][0-9]{8}$",
+          "minLength": 10,
+          "maxLength": 10
+        },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "uid", "username", "authEmail", "updatedAt"]
+    },
+    "RecoveryProfile": {
+      "title": "RecoveryProfile",
+      "description": "Phone-keyed account recovery mapping preserving primaryUid, activeUid, and recovery count across password resets.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^ph_0[79][0-9]{8}$", "minLength": 13, "maxLength": 13 },
+        "phone": { "type": "string", "pattern": "^0[79][0-9]{8}$", "minLength": 10, "maxLength": 10 },
+        "primaryUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "activeUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "recoveryCount": { "type": "number" },
+        "authEmail": { "type": "string", "minLength": 5, "maxLength": 150 },
+        "username": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "phone", "primaryUid", "activeUid", "recoveryCount", "authEmail", "updatedAt"]
+    },
+    "AdminBootstrap": {
+      "title": "AdminBootstrap",
+      "description": "Tracks whether the initial admin account has been initialized and whether its default username has been renamed.",
+      "type": "object",
+      "properties": {
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "bootstrapClaimed": { "type": "boolean" },
+        "passwordVersion": { "type": "number" },
+        "passwordUpdatedAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerUid", "bootstrapClaimed", "passwordVersion", "passwordUpdatedAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -756,6 +841,18 @@
     "/settings/gameConfig": {
       "schema": { "$ref": "#/entities/GameConfig" },
       "description": "Admin-configured game odds multipliers and table bet limits."
+    },
+    "/settings/adminBootstrap": {
+      "schema": { "$ref": "#/entities/AdminBootstrap" },
+      "description": "Tracks initialization and credential-change metadata for the bootstrapped admin account."
+    },
+    "/usernames/{usernameId}": {
+      "schema": { "$ref": "#/entities/UsernameIndex" },
+      "description": "Single-document username lookup index mapping customized usernames to Firebase Auth sign-in emails."
+    },
+    "/recoveryProfiles/{profileId}": {
+      "schema": { "$ref": "#/entities/RecoveryProfile" },
+      "description": "Single-document phone-based recovery profile linking phone numbers to primaryUid and latest activeUid."
     },
     "/admins/{uid}": {
       "schema": { "$ref": "#/entities/AdminRecord" },

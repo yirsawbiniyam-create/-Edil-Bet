@@ -50,6 +50,7 @@ interface GameArenaProps {
   onToggleSound: () => void;
   onGoToDeposit: () => void;
   onNotify: (msg: string, type: 'success' | 'error' | 'info') => void;
+  onWinCelebrate?: () => void;
 }
 
 export const GameArena: React.FC<GameArenaProps> = ({
@@ -61,6 +62,7 @@ export const GameArena: React.FC<GameArenaProps> = ({
   onToggleSound,
   onGoToDeposit,
   onNotify,
+  onWinCelebrate,
 }) => {
   const arenaRef = useRef<HTMLDivElement | null>(null);
   const [activeGame, setActiveGame] = useState<GameCategory>('dice');
@@ -157,10 +159,6 @@ export const GameArena: React.FC<GameArenaProps> = ({
     if (isRolling) return;
     if (!Number.isFinite(numericBet) || numericBet < minBet) {
       onNotify(`ዝቅተኛው የጠረጴዛ መወራረጃ መጠን ${minBet} ብር ነው።`, 'error');
-      return;
-    }
-    if (numericBet > maxBet) {
-      onNotify(`ከፍተኛው የጠረጴዛ መወራረጃ ገደብ ${maxBet.toLocaleString()} ብር ነው።`, 'error');
       return;
     }
     if (wallet.balance < numericBet) {
@@ -337,6 +335,7 @@ export const GameArena: React.FC<GameArenaProps> = ({
 
       if (params.won) {
         playGameSound('win', soundEnabled);
+        onWinCelebrate?.();
         setLastOutcome({
           won: true,
           title: `እንኳን ደስ አለዎት! ${formatETB(params.payout)} አሸንፈዋል!`,
@@ -872,7 +871,7 @@ export const GameArena: React.FC<GameArenaProps> = ({
                 የመወራረጃ መጠን (በብር)
               </label>
               <span className="text-[11px] font-mono-num text-slate-500">
-                ገደብ: {minBet.toLocaleString()} – {maxBet.toLocaleString()} ብር
+                ዝቅተኛ: {minBet.toLocaleString()} ብር · ያለ ገደብ (Unlimited)
               </span>
             </div>
             <span className="font-mono-num text-xs sm:text-sm font-bold text-emerald-400">
@@ -886,7 +885,6 @@ export const GameArena: React.FC<GameArenaProps> = ({
                 id="betAmountInput"
                 type="number"
                 min={minBet}
-                max={maxBet}
                 step={1}
                 value={betInput}
                 onChange={(e) => setBetInput(e.target.value)}

@@ -17,7 +17,7 @@ export type GameConfigValues = Omit<GameConfig, 'updatedBy' | 'updatedAt'>;
 
 export const DEFAULT_GAME_CONFIG: GameConfigValues = {
   minBet: 10,
-  maxBet: 50000,
+  maxBet: 10000000,
   houseWinRate: 0.28,
   singleDiceRangeOdds: 2,
   singleDiceExactOdds: 5.5,
@@ -26,7 +26,7 @@ export const DEFAULT_GAME_CONFIG: GameConfigValues = {
   coinOdds: 2,
   luckyOdds: 18,
   footballOddsScale: 1,
-  footballMaxOdds: 500,
+  footballMaxOdds: 1000000,
 };
 
 export const DOUBLE_SUM_MULTIPLIERS: Record<number, number> = {

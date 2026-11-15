@@ -261,6 +261,11 @@ export interface GameConfig {
 export interface UserWallet {
   uid: string;
   displayName: string;
+  username?: string;
+  primaryUid?: string;
+  mustChangePassword?: boolean;
+  passwordVersion?: number;
+  passwordUpdatedAt?: Timestamp;
   balance: number;
   hasDeposited: boolean;
   totalDeposited: number;
@@ -274,7 +279,8 @@ export interface UserWallet {
 export interface UserPrivateInfo {
   uid: string;
   email: string;
-  telebirrPhone: string;
+  username?: string;
+  telebirrPhone?: string;
   updatedAt: Timestamp;
 }
 
@@ -310,6 +316,7 @@ export interface WithdrawalRecord {
 export interface BetRecord {
   id: string;
   uid: string;
+  ownerPhone?: string;
   gameType: 'dice_single' | 'dice_double' | 'dice_d100' | 'coin' | 'lucky' | 'football';
   gameName: string;
   betAmount: number;
@@ -378,6 +385,7 @@ export interface FootballTicketPick {
 export interface FootballTicket {
   id: string;
   uid: string;
+  ownerPhone?: string;
   betAmount: number;
   totalOdds: number;
   potentialPayout: number;

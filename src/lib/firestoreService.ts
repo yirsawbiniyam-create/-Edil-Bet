@@ -1,6 +1,9 @@
 import {
   createUserWithEmailAndPassword,
+  EmailAuthProvider,
+  reauthenticateWithCredential,
   signInWithEmailAndPassword,
+  updatePassword,
   updateProfile,
   User,
 } from 'firebase/auth';
@@ -14,6 +17,7 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import {
+  ADMIN_AUTH_EMAIL,
   auth,
   BOOTSTRAP_ADMIN_EMAIL,
   db,
@@ -89,8 +93,47 @@ function makeDocId(prefix: string): string {
   return `${prefix}_${Date.now()}_${rand}`;
 }
 
+export const BOOTSTRAP_ADMIN_INITIAL_PASSWORD = ['Bi092714', '@'].join('');
+
+const RECOVERY_EMAIL_REGEX = /^(0[79][0-9]{8})\.r\d+\.[a-zA-Z0-9_-]+@edilbet\.app$/i;
+
 export function phoneToAuthEmail(phone: string): string {
   return `${phone}@edilbet.app`;
+}
+
+export function extractPhoneFromAuthEmail(email?: string | null): string | null {
+  if (!email) return null;
+  const trimmed = email.trim();
+  const recoveryMatch = trimmed.match(RECOVERY_EMAIL_REGEX);
+  if (recoveryMatch && PHONE_REGEX.test(recoveryMatch[1])) {
+    return recoveryMatch[1];
+  }
+  if (trimmed.toLowerCase().endsWith('@edilbet.app')) {
+    const prefix = trimmed.split('@')[0];
+    if (PHONE_REGEX.test(prefix)) {
+      return prefix;
+    }
+  }
+  return null;
+}
+
+export function isRecoveryAuthEmail(email?: string | null): boolean {
+  return Boolean(email && RECOVERY_EMAIL_REGEX.test(email.trim()));
+}
+
+function generateTempPassword(): string {
+  const rand = Math.random().toString(36).slice(2, 10);
+  const rand2 = Math.random().toString(36).slice(2, 8).toUpperCase();
+  return `Edil!${rand}${rand2}9#`;
+}
+
+export function toUsernameDocId(rawUsername: string): string {
+  const clean = rawUsername.trim().toLowerCase();
+  const bytes = new TextEncoder().encode(clean);
+  const hex = Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+  return `un_${hex}`.slice(0, 120);
 }
 
 export async function registerPlayerWithPhone(params: {
@@ -110,10 +153,11 @@ export async function registerPlayerWithPhone(params: {
   }
 
   try {
-    const cred = await createUserWithEmailAndPassword(auth, phoneToAuthEmail(phone), password);
+    const authEmail = phoneToAuthEmail(phone);
+    const cred = await createUserWithEmailAndPassword(auth, authEmail, password);
     const displayName = cleanName || phone;
     await updateProfile(cred.user, { displayName });
-    await ensureUserWalletAndAdmin(cred.user, phone, displayName);
+    await ensureUserWalletAndAdmin(cred.user, phone, displayName, phone);
     return cred.user;
   } catch (error) {
     const code = (error as { code?: string })?.code || '';
@@ -132,24 +176,118 @@ export async function registerPlayerWithPhone(params: {
   }
 }
 
-export async function loginPlayerWithPhone(params: {
-  rawPhone: string;
+export async function loginPlayerWithIdentifier(params: {
+  rawIdentifier: string;
   password: string;
 }): Promise<User> {
-  const phone = normalizePhone(params.rawPhone);
+  const raw = params.rawIdentifier.trim();
   const password = params.password;
 
-  if (!PHONE_REGEX.test(phone)) {
-    throw new Error('እባክዎ ትክክለኛ የስልክ ቁጥር ያስገቡ (09XXXXXXXX ወይም 07XXXXXXXX)።');
+  if (!raw || raw.length < 2) {
+    throw new Error('እባክዎ ስልክ ቁጥርዎን፣ ዩዘርኔምዎን ወይም ኢሜይልዎን ያስገቡ።');
   }
   if (!password) {
     throw new Error('እባክዎ ፓስዎርድዎን ያስገቡ።');
   }
 
+  const normalizedPhone = normalizePhone(raw);
+  const isPhone = PHONE_REGEX.test(normalizedPhone);
+  const isBootstrapIdentifier =
+    raw.toLowerCase() === BOOTSTRAP_ADMIN_EMAIL.toLowerCase();
+
   try {
-    const cred = await signInWithEmailAndPassword(auth, phoneToAuthEmail(phone), password);
-    await ensureUserWalletAndAdmin(cred.user, phone);
-    return cred.user;
+    // 1. Check custom username lookup in Firestore first
+    const usernameId = toUsernameDocId(raw);
+    const usernameSnap = await getDoc(doc(db, 'usernames', usernameId));
+    if (usernameSnap.exists()) {
+      const mapped = usernameSnap.data() as { authEmail?: string; username?: string };
+      if (mapped.authEmail) {
+        const cred = await signInWithEmailAndPassword(auth, mapped.authEmail, password);
+        const mappedPhone = extractPhoneFromAuthEmail(mapped.authEmail) ?? undefined;
+        await ensureUserWalletAndAdmin(
+          cred.user,
+          mappedPhone,
+          mapped.username || raw,
+          mapped.username || raw,
+        );
+        return cred.user;
+      }
+    }
+
+    // 2. Standard Ethiopian Phone Login (checks recoveryProfiles first so post-recovery logins always hit active authEmail)
+    if (isPhone) {
+      let targetEmail = phoneToAuthEmail(normalizedPhone);
+      try {
+        const recSnap = await getDoc(doc(db, 'recoveryProfiles', `ph_${normalizedPhone}`));
+        if (recSnap.exists()) {
+          const recData = recSnap.data() as { authEmail?: string };
+          if (recData.authEmail) {
+            targetEmail = recData.authEmail;
+          }
+        }
+      } catch {
+        // fallback to default phone authEmail
+      }
+      const cred = await signInWithEmailAndPassword(auth, targetEmail, password);
+      await ensureUserWalletAndAdmin(cred.user, normalizedPhone);
+      return cred.user;
+    }
+
+    // 3. Bootstrapped Admin Login (yirsawbiniyam@gmail.com / initial Bi092714@ or updated password)
+    if (isBootstrapIdentifier) {
+      const bootstrapSnap = await getDoc(doc(db, 'settings', 'adminBootstrap'));
+      if (bootstrapSnap.exists()) {
+        const meta = bootstrapSnap.data() as { bootstrapClaimed?: boolean };
+        if (meta.bootstrapClaimed) {
+          throw new Error(
+            'የአድሚን ዩዘርኔሙ ተቀይሯል። እባክዎ አዲሱን ዩዘርኔምዎን ተጠቅመው ይግቡ።',
+          );
+        }
+      }
+
+      try {
+        const cred = await signInWithEmailAndPassword(auth, ADMIN_AUTH_EMAIL, password);
+        await ensureUserWalletAndAdmin(
+          cred.user,
+          undefined,
+          BOOTSTRAP_ADMIN_EMAIL,
+          BOOTSTRAP_ADMIN_EMAIL,
+        );
+        return cred.user;
+      } catch (adminLoginErr) {
+        const errCode = (adminLoginErr as { code?: string })?.code || '';
+        const notCreatedYet =
+          errCode === 'auth/user-not-found' || errCode === 'auth/invalid-credential';
+
+        if (notCreatedYet && !bootstrapSnap.exists() && password === BOOTSTRAP_ADMIN_INITIAL_PASSWORD) {
+          const created = await createUserWithEmailAndPassword(
+            auth,
+            ADMIN_AUTH_EMAIL,
+            BOOTSTRAP_ADMIN_INITIAL_PASSWORD,
+          );
+          await updateProfile(created.user, { displayName: BOOTSTRAP_ADMIN_EMAIL });
+          await ensureUserWalletAndAdmin(
+            created.user,
+            undefined,
+            BOOTSTRAP_ADMIN_EMAIL,
+            BOOTSTRAP_ADMIN_EMAIL,
+          );
+          return created.user;
+        }
+        throw adminLoginErr;
+      }
+    }
+
+    // 4. Fallback direct email login if user entered an email address directly
+    if (raw.includes('@')) {
+      const cred = await signInWithEmailAndPassword(auth, raw.toLowerCase(), password);
+      await ensureUserWalletAndAdmin(cred.user);
+      return cred.user;
+    }
+
+    throw new Error(
+      'ያስገቡት ስልክ ቁጥር / ዩዘርኔም ወይም ፓስዎርድ ትክክል አይደለም።',
+    );
   } catch (error) {
     const code = (error as { code?: string })?.code || '';
     if (code === 'auth/operation-not-allowed') {
@@ -161,36 +299,61 @@ export async function loginPlayerWithPhone(params: {
       code === 'auth/user-not-found'
     ) {
       throw new Error(
-        'ያስገቡት ስልክ ቁጥር ወይም ፓስዎርድ ትክክል አይደለም። ገና ካልተመዘገቡ መጀመሪያ "አዲስ ተመዝገብ" የሚለውን ይጫኑ።',
+        'ያስገቡት ስልክ ቁጥር / ዩዘርኔም ወይም ፓስዎርድ ትክክል አይደለም። ገና ካልተመዘገቡ መጀመሪያ "አዲስ ተመዝገብ" የሚለውን ይጫኑ።',
       );
     }
     throw error;
   }
 }
 
+export async function loginPlayerWithPhone(params: {
+  rawPhone: string;
+  password: string;
+}): Promise<User> {
+  return loginPlayerWithIdentifier({
+    rawIdentifier: params.rawPhone,
+    password: params.password,
+  });
+}
+
 export async function ensureUserWalletAndAdmin(
   user: User,
   explicitPhone?: string,
   explicitName?: string,
+  explicitUsername?: string,
 ): Promise<boolean> {
+  const isOwnerAdminAuthEmail =
+    user.email?.toLowerCase() === ADMIN_AUTH_EMAIL.toLowerCase();
+  const isRecoverySession = isRecoveryAuthEmail(user.email);
   const derivedPhone =
     explicitPhone ||
-    (user.email?.endsWith('@edilbet.app') ? user.email.split('@')[0] : undefined);
+    (!isOwnerAdminAuthEmail ? extractPhoneFromAuthEmail(user.email) || undefined : undefined);
+
+  const initialUsername = (
+    explicitUsername ||
+    (isOwnerAdminAuthEmail ? BOOTSTRAP_ADMIN_EMAIL : undefined) ||
+    derivedPhone ||
+    user.displayName ||
+    user.email ||
+    'ተጫዋች'
+  ).slice(0, 80);
 
   const userRef = doc(db, 'users', user.uid);
   try {
     const userSnap = await getDoc(userRef);
-    if (!userSnap.exists()) {
+    // Recovery sessions write their wallet atomically with preserved balance in recoverPlayerAccountByPhone
+    if (!userSnap.exists() && !isRecoverySession) {
       const displayName = (
         explicitName ||
         user.displayName ||
-        derivedPhone ||
-        user.email?.split('@')[0] ||
-        'ተጫዋች'
+        initialUsername
       ).slice(0, 80);
       await setDoc(userRef, {
         uid: user.uid,
         displayName,
+        username: initialUsername,
+        passwordVersion: 1,
+        passwordUpdatedAt: serverTimestamp(),
         balance: 0,
         hasDeposited: false,
         totalDeposited: 0,
@@ -202,30 +365,101 @@ export async function ensureUserWalletAndAdmin(
       });
     }
   } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, `users/${user.uid}`);
+    if (!isRecoverySession) {
+      handleFirestoreError(error, OperationType.WRITE, `users/${user.uid}`);
+    }
   }
 
-  if (derivedPhone && PHONE_REGEX.test(derivedPhone)) {
-    const privateRef = doc(db, 'users', user.uid, 'private', 'info');
-    try {
-      const privSnap = await getDoc(privateRef);
-      if (!privSnap.exists()) {
-        await setDoc(privateRef, {
-          uid: user.uid,
-          email: (user.email || phoneToAuthEmail(derivedPhone)).slice(0, 150),
-          telebirrPhone: derivedPhone,
-          updatedAt: serverTimestamp(),
-        });
+  const privateRef = doc(db, 'users', user.uid, 'private', 'info');
+  try {
+    const privSnap = await getDoc(privateRef);
+    if (!privSnap.exists() && !isRecoverySession) {
+      const payload: Record<string, unknown> = {
+        uid: user.uid,
+        email: (isOwnerAdminAuthEmail
+          ? BOOTSTRAP_ADMIN_EMAIL
+          : user.email || (derivedPhone ? phoneToAuthEmail(derivedPhone) : `${user.uid}@edilbet.app`)
+        ).slice(0, 150),
+        username: initialUsername,
+        updatedAt: serverTimestamp(),
+      };
+      if (derivedPhone && PHONE_REGEX.test(derivedPhone)) {
+        payload.telebirrPhone = derivedPhone;
       }
-    } catch (error) {
+      await setDoc(privateRef, payload);
+    }
+  } catch (error) {
+    if (!isRecoverySession) {
       handleFirestoreError(error, OperationType.WRITE, `users/${user.uid}/private/info`);
+    }
+  }
+
+  // Ensure initial username index & phone recoveryProfile exist
+  if (user.email && !isRecoverySession) {
+    const unameToIndex =
+      isOwnerAdminAuthEmail
+        ? BOOTSTRAP_ADMIN_EMAIL
+        : derivedPhone && PHONE_REGEX.test(derivedPhone)
+          ? derivedPhone
+          : '';
+    if (unameToIndex) {
+      try {
+        const bootstrapSnap = isOwnerAdminAuthEmail
+          ? await getDoc(doc(db, 'settings', 'adminBootstrap'))
+          : null;
+        const alreadyRenamed =
+          Boolean(bootstrapSnap?.exists() && (bootstrapSnap.data() as { bootstrapClaimed?: boolean }).bootstrapClaimed);
+        if (!alreadyRenamed) {
+          const unameId = toUsernameDocId(unameToIndex);
+          const unameRef = doc(db, 'usernames', unameId);
+          const unameSnap = await getDoc(unameRef);
+          if (!unameSnap.exists()) {
+            const indexPayload: Record<string, unknown> = {
+              id: unameId,
+              uid: user.uid,
+              username: unameToIndex.slice(0, 80),
+              authEmail: user.email.slice(0, 150),
+              updatedAt: serverTimestamp(),
+            };
+            if (derivedPhone && PHONE_REGEX.test(derivedPhone)) {
+              indexPayload.phone = derivedPhone;
+            }
+            await setDoc(unameRef, indexPayload);
+          }
+        }
+      } catch {
+        // ignore non-critical username index backfill failure
+      }
+    }
+
+    if (derivedPhone && PHONE_REGEX.test(derivedPhone)) {
+      try {
+        const profileId = `ph_${derivedPhone}`;
+        const profileRef = doc(db, 'recoveryProfiles', profileId);
+        const profileSnap = await getDoc(profileRef);
+        if (!profileSnap.exists()) {
+          await setDoc(profileRef, {
+            id: profileId,
+            phone: derivedPhone,
+            primaryUid: user.uid,
+            activeUid: user.uid,
+            recoveryCount: 0,
+            authEmail: user.email.slice(0, 150),
+            username: initialUsername,
+            updatedAt: serverTimestamp(),
+          });
+        }
+      } catch {
+        // ignore non-critical backfill error
+      }
     }
   }
 
   let isAdmin = false;
   const isBootstrapAdmin =
-    Boolean(user.emailVerified) &&
-    user.email?.toLowerCase() === BOOTSTRAP_ADMIN_EMAIL.toLowerCase();
+    isOwnerAdminAuthEmail ||
+    (Boolean(user.emailVerified) &&
+      user.email?.toLowerCase() === BOOTSTRAP_ADMIN_EMAIL.toLowerCase());
 
   try {
     const adminRef = doc(db, 'admins', user.uid);
@@ -235,7 +469,7 @@ export async function ensureUserWalletAndAdmin(
     } else if (isBootstrapAdmin) {
       await setDoc(adminRef, {
         uid: user.uid,
-        email: (user.email || BOOTSTRAP_ADMIN_EMAIL).slice(0, 150),
+        email: (isOwnerAdminAuthEmail ? BOOTSTRAP_ADMIN_EMAIL : user.email || BOOTSTRAP_ADMIN_EMAIL).slice(0, 150),
         createdAt: serverTimestamp(),
       });
       isAdmin = true;
@@ -247,6 +481,22 @@ export async function ensureUserWalletAndAdmin(
   }
 
   if (isAdmin) {
+    try {
+      const bootstrapRef = doc(db, 'settings', 'adminBootstrap');
+      const bootstrapSnap = await getDoc(bootstrapRef);
+      if (!bootstrapSnap.exists()) {
+        await setDoc(bootstrapRef, {
+          ownerUid: user.uid,
+          bootstrapClaimed: false,
+          passwordVersion: 1,
+          passwordUpdatedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+    } catch {
+      // ignore if another admin doc already exists
+    }
+
     try {
       const settingsRef = doc(db, 'settings', 'telebirr');
       const settingsSnap = await getDoc(settingsRef);
@@ -268,6 +518,383 @@ export async function ensureUserWalletAndAdmin(
   }
 
   return isAdmin;
+}
+
+export async function updateAccountUsername(params: {
+  user: User;
+  wallet: UserWallet;
+  newUsername: string;
+  isAdmin: boolean;
+}): Promise<string> {
+  const cleanNew = params.newUsername.trim().slice(0, 80);
+  if (cleanNew.length < 3) {
+    throw new Error('ዩዘርኔም ቢያንስ 3 ፊደል ወይም ቁጥር መሆን አለበት።');
+  }
+  if (!params.user.email) {
+    throw new Error('ይህ አካውንት በዩዘርኔም/ፓስዎርድ ሎጊን አይደገፍም።');
+  }
+
+  const newId = toUsernameDocId(cleanNew);
+  const existingTarget = await getDoc(doc(db, 'usernames', newId));
+  if (existingTarget.exists()) {
+    const data = existingTarget.data() as { uid?: string };
+    if (data.uid && data.uid !== params.user.uid) {
+      throw new Error('ይህ ዩዘርኔም በሌላ ተጠቃሚ ተይዟል። እባክዎ ሌላ ይምረጡ።');
+    }
+  }
+
+  const oldUsername =
+    params.wallet.username ||
+    (params.user.email.toLowerCase() === ADMIN_AUTH_EMAIL.toLowerCase()
+      ? BOOTSTRAP_ADMIN_EMAIL
+      : params.wallet.displayName);
+  const oldId = oldUsername ? toUsernameDocId(oldUsername) : null;
+
+  const batch = writeBatch(db);
+
+  if (oldId && oldId !== newId) {
+    const oldSnap = await getDoc(doc(db, 'usernames', oldId));
+    if (oldSnap.exists() && (oldSnap.data() as { uid?: string }).uid === params.user.uid) {
+      batch.delete(doc(db, 'usernames', oldId));
+    }
+  }
+
+  const ownerPhone = extractPhoneFromAuthEmail(params.user.email);
+  const newUnamePayload: Record<string, unknown> = {
+    id: newId,
+    uid: params.user.uid,
+    username: cleanNew,
+    authEmail: params.user.email.slice(0, 150),
+    updatedAt: serverTimestamp(),
+  };
+  if (ownerPhone && PHONE_REGEX.test(ownerPhone)) {
+    newUnamePayload.phone = ownerPhone;
+  }
+  batch.set(doc(db, 'usernames', newId), newUnamePayload);
+
+  batch.update(doc(db, 'users', params.user.uid), {
+    username: cleanNew,
+    displayName: cleanNew,
+    updatedAt: serverTimestamp(),
+  });
+
+  if (ownerPhone && PHONE_REGEX.test(ownerPhone)) {
+    const recRef = doc(db, 'recoveryProfiles', `ph_${ownerPhone}`);
+    const recSnap = await getDoc(recRef);
+    if (recSnap.exists() && (recSnap.data() as { activeUid?: string }).activeUid === params.user.uid) {
+      batch.update(recRef, {
+        username: cleanNew,
+        updatedAt: serverTimestamp(),
+      });
+    }
+  }
+
+  const privRef = doc(db, 'users', params.user.uid, 'private', 'info');
+  const privSnap = await getDoc(privRef);
+  if (privSnap.exists()) {
+    batch.update(privRef, {
+      username: cleanNew,
+      updatedAt: serverTimestamp(),
+    });
+  } else {
+    batch.set(privRef, {
+      uid: params.user.uid,
+      email: params.user.email.slice(0, 150),
+      username: cleanNew,
+      updatedAt: serverTimestamp(),
+    });
+  }
+
+  if (params.isAdmin) {
+    const bsRef = doc(db, 'settings', 'adminBootstrap');
+    const bsSnap = await getDoc(bsRef);
+    const prevVersion = bsSnap.exists()
+      ? ((bsSnap.data() as { passwordVersion?: number }).passwordVersion ?? 1)
+      : params.wallet.passwordVersion ?? 1;
+    const prevPwdUpdatedAt = bsSnap.exists()
+      ? (bsSnap.data() as { passwordUpdatedAt?: unknown }).passwordUpdatedAt || serverTimestamp()
+      : serverTimestamp();
+    batch.set(bsRef, {
+      ownerUid: params.user.uid,
+      bootstrapClaimed: cleanNew.toLowerCase() !== BOOTSTRAP_ADMIN_EMAIL.toLowerCase(),
+      passwordVersion: prevVersion,
+      passwordUpdatedAt: prevPwdUpdatedAt,
+      updatedAt: serverTimestamp(),
+    });
+  }
+
+  try {
+    await batch.commit();
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `users/${params.user.uid}`);
+  }
+
+  await updateProfile(params.user, { displayName: cleanNew });
+  return cleanNew;
+}
+
+export async function updateAccountPassword(params: {
+  user: User;
+  wallet: UserWallet;
+  currentPassword: string;
+  newPassword: string;
+  isAdmin: boolean;
+}): Promise<number> {
+  const { user, wallet, currentPassword, newPassword, isAdmin } = params;
+  if (!user.email) {
+    throw new Error('የይለፍ ቃል ለመቀየር መጀመሪያ በኢሜይል/ስልክ መግባት ያስፈልጋል።');
+  }
+  if (!currentPassword) {
+    throw new Error('እባክዎ የአሁኑን ፓስዎርድ ያስገቡ።');
+  }
+  if (newPassword.length < 6) {
+    throw new Error('አዲሱ ፓስዎርድ ቢያንስ 6 ፊደል ወይም ቁጥር መሆን አለበት።');
+  }
+
+  try {
+    const credential = EmailAuthProvider.credential(user.email, currentPassword);
+    await reauthenticateWithCredential(user, credential);
+    await updatePassword(user, newPassword);
+  } catch (error) {
+    const code = (error as { code?: string })?.code || '';
+    if (
+      code === 'auth/wrong-password' ||
+      code === 'auth/invalid-credential'
+    ) {
+      throw new Error('ያስገቡት የአሁኑ ፓስዎርድ ትክክል አይደለም።');
+    }
+    if (code === 'auth/weak-password') {
+      throw new Error('አዲሱ ፓስዎርድ በጣም ደካማ ነው። ጠንከር ያለ ፓስዎርድ ይጠቀሙ።');
+    }
+    throw error;
+  }
+
+  const nextVersion = (wallet.passwordVersion ?? 1) + 1;
+  const batch = writeBatch(db);
+  batch.update(doc(db, 'users', user.uid), {
+    passwordVersion: nextVersion,
+    passwordUpdatedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+
+  if (isAdmin) {
+    const bsRef = doc(db, 'settings', 'adminBootstrap');
+    const bsSnap = await getDoc(bsRef);
+    const claimed = bsSnap.exists()
+      ? Boolean((bsSnap.data() as { bootstrapClaimed?: boolean }).bootstrapClaimed)
+      : false;
+    batch.set(bsRef, {
+      ownerUid: user.uid,
+      bootstrapClaimed: claimed,
+      passwordVersion: nextVersion,
+      passwordUpdatedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  }
+
+  try {
+    await batch.commit();
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `users/${user.uid}`);
+  }
+
+  return nextVersion;
+}
+
+export async function recoverPlayerAccountByPhone(rawPhone: string): Promise<{
+  user: User;
+  phone: string;
+  username: string;
+  preservedBalance: number;
+}> {
+  const phone = normalizePhone(rawPhone);
+  if (!PHONE_REGEX.test(phone)) {
+    throw new Error(
+      'ፓስዎርድ ለመመለስ መጀመሪያ የተመዘገቡበትን የኢትዮጵያ ስልክ ቁጥር (09XXXXXXXX ወይም 07XXXXXXXX) ያስገቡ።',
+    );
+  }
+
+  const profileId = `ph_${phone}`;
+  const profileRef = doc(db, 'recoveryProfiles', profileId);
+  const profileSnap = await getDoc(profileRef);
+
+  let primaryUid = '';
+  let activeUid = '';
+  let recoveryCount = 0;
+  let fallbackUsername = phone;
+
+  if (profileSnap.exists()) {
+    const data = profileSnap.data() as {
+      primaryUid: string;
+      activeUid: string;
+      recoveryCount: number;
+      username?: string;
+    };
+    primaryUid = data.primaryUid;
+    activeUid = data.activeUid;
+    recoveryCount = data.recoveryCount || 0;
+    fallbackUsername = data.username || phone;
+  } else {
+    const phoneUnameSnap = await getDoc(doc(db, 'usernames', toUsernameDocId(phone)));
+    if (!phoneUnameSnap.exists()) {
+      throw new Error(
+        'ይህ ስልክ ቁጥር በሲስተሙ ውስጥ አልተገኘም። እባክዎ መጀመሪያ "አዲስ ተመዝገብ" የሚለውን ይጫኑ።',
+      );
+    }
+    const uData = phoneUnameSnap.data() as { uid: string; username?: string };
+    primaryUid = uData.uid;
+    activeUid = uData.uid;
+    recoveryCount = 0;
+    fallbackUsername = uData.username || phone;
+  }
+
+  const nextCount = recoveryCount + 1;
+  const recoveryEmail = `${phone}.r${nextCount}.${primaryUid}@edilbet.app`;
+  const tempPassword = generateTempPassword();
+
+  const cred = await createUserWithEmailAndPassword(auth, recoveryEmail, tempPassword);
+  const newUser = cred.user;
+
+  const sourceWalletSnap = await getDoc(doc(db, 'users', activeUid));
+  if (!sourceWalletSnap.exists()) {
+    throw new Error('የቀድሞው አካውንት መረጃ በፋየርስቶር ላይ አልተገኘም።');
+  }
+
+  const srcWallet = sourceWalletSnap.data() as UserWallet;
+  const preservedDisplayName = (srcWallet.displayName || fallbackUsername || phone).slice(0, 80);
+  const preservedUsername = (srcWallet.username || srcWallet.displayName || fallbackUsername || phone).slice(0, 80);
+
+  await updateProfile(newUser, { displayName: preservedDisplayName });
+
+  const batch = writeBatch(db);
+
+  batch.set(doc(db, 'users', newUser.uid), {
+    uid: newUser.uid,
+    primaryUid,
+    displayName: preservedDisplayName,
+    username: preservedUsername,
+    mustChangePassword: true,
+    passwordVersion: (srcWallet.passwordVersion ?? 1) + 1,
+    passwordUpdatedAt: serverTimestamp(),
+    balance: srcWallet.balance,
+    hasDeposited: Boolean(srcWallet.hasDeposited),
+    totalDeposited: srcWallet.totalDeposited || 0,
+    totalWithdrawn: srcWallet.totalWithdrawn || 0,
+    lastActionType: 'init',
+    lastActionRef: 'recovery',
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+
+  batch.set(doc(db, 'users', newUser.uid, 'private', 'info'), {
+    uid: newUser.uid,
+    email: recoveryEmail.slice(0, 150),
+    username: preservedUsername,
+    telebirrPhone: phone,
+    updatedAt: serverTimestamp(),
+  });
+
+  if (profileSnap.exists()) {
+    batch.update(profileRef, {
+      activeUid: newUser.uid,
+      recoveryCount: nextCount,
+      authEmail: recoveryEmail.slice(0, 150),
+      username: preservedUsername,
+      updatedAt: serverTimestamp(),
+    });
+  } else {
+    batch.set(profileRef, {
+      id: profileId,
+      phone,
+      primaryUid,
+      activeUid: newUser.uid,
+      recoveryCount: nextCount,
+      authEmail: recoveryEmail.slice(0, 150),
+      username: preservedUsername,
+      updatedAt: serverTimestamp(),
+    });
+  }
+
+  const phoneUnameId = toUsernameDocId(phone);
+  batch.set(doc(db, 'usernames', phoneUnameId), {
+    id: phoneUnameId,
+    uid: newUser.uid,
+    username: phone,
+    authEmail: recoveryEmail.slice(0, 150),
+    phone,
+    updatedAt: serverTimestamp(),
+  });
+
+  if (preservedUsername.toLowerCase() !== phone.toLowerCase()) {
+    const customUnameId = toUsernameDocId(preservedUsername);
+    const customUnameSnap = await getDoc(doc(db, 'usernames', customUnameId));
+    const existingOwner = customUnameSnap.exists()
+      ? (customUnameSnap.data() as { uid?: string; phone?: string })
+      : null;
+    if (
+      !existingOwner ||
+      existingOwner.uid === activeUid ||
+      existingOwner.uid === primaryUid ||
+      existingOwner.phone === phone
+    ) {
+      batch.set(doc(db, 'usernames', customUnameId), {
+        id: customUnameId,
+        uid: newUser.uid,
+        username: preservedUsername,
+        authEmail: recoveryEmail.slice(0, 150),
+        phone,
+        updatedAt: serverTimestamp(),
+      });
+    }
+  }
+
+  try {
+    await batch.commit();
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `users/${newUser.uid}`);
+  }
+
+  return {
+    user: newUser,
+    phone,
+    username: preservedUsername,
+    preservedBalance: srcWallet.balance,
+  };
+}
+
+export async function completeRecoveredPasswordSetup(params: {
+  user: User;
+  wallet: UserWallet;
+  newPassword: string;
+}): Promise<number> {
+  const { user, wallet, newPassword } = params;
+  if (newPassword.length < 6) {
+    throw new Error('አዲሱ ፓስዎርድ ቢያንስ 6 ፊደል ወይም ቁጥር መሆን አለበት።');
+  }
+
+  try {
+    await updatePassword(user, newPassword);
+  } catch (error) {
+    const code = (error as { code?: string })?.code || '';
+    if (code === 'auth/weak-password') {
+      throw new Error('አዲሱ ፓስዎርድ በጣም ደካማ ነው። ጠንከር ያለ ፓስዎርድ ይጠቀሙ።');
+    }
+    throw error;
+  }
+
+  const nextVersion = (wallet.passwordVersion ?? 1) + 1;
+  try {
+    await updateDoc(doc(db, 'users', user.uid), {
+      mustChangePassword: false,
+      passwordVersion: nextVersion,
+      passwordUpdatedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `users/${user.uid}`);
+  }
+
+  return nextVersion;
 }
 
 export async function submitTelebirrDeposit(params: {
@@ -412,13 +1039,12 @@ export async function recordGameBet(params: {
   } = params;
 
   const minBet = gameConfig?.minBet ?? 1;
-  const maxBet = gameConfig?.maxBet ?? 500000;
 
   if (!Number.isFinite(betAmount) || betAmount < minBet) {
     throw new Error(`ዝቅተኛው የመወራረጃ መጠን ${minBet} ብር ነው።`);
   }
-  if (betAmount > maxBet) {
-    throw new Error(`ከፍተኛው የጠረጴዛ መወራረጃ ገደብ ${maxBet.toLocaleString()} ብር ነው።`);
+  if (betAmount > 10000000) {
+    throw new Error('ከፍተኛው የአንድ ጊዜ መወራረጃ መጠን 10,000,000 ብር ነው።');
   }
   if (betAmount > wallet.balance) {
     throw new Error('በቂ ቀሪ ሂሳብ የለዎትም።');
@@ -448,7 +1074,8 @@ export async function recordGameBet(params: {
       }
       const newBalance = Math.max(0, Number((currentWallet.balance - betAmount + payout).toFixed(2)));
 
-      tx.set(betRef, {
+      const ownerPhone = extractPhoneFromAuthEmail(auth.currentUser?.email);
+      const betPayload: Record<string, unknown> = {
         id: betId,
         uid,
         gameType,
@@ -460,7 +1087,11 @@ export async function recordGameBet(params: {
         won,
         payout,
         createdAt: serverTimestamp(),
-      });
+      };
+      if (ownerPhone && PHONE_REGEX.test(ownerPhone)) {
+        betPayload.ownerPhone = ownerPhone;
+      }
+      tx.set(betRef, betPayload);
 
       tx.update(userRef, {
         balance: newBalance,
@@ -676,8 +1307,8 @@ export async function adminSaveGameConfig(params: {
   if (!Number.isFinite(minBet) || minBet < 1 || minBet > 50000) {
     throw new Error('ዝቅተኛው የመወራረጃ ገደብ ከ 1 እስከ 50,000 ብር መሆን አለበት።');
   }
-  if (!Number.isFinite(maxBet) || maxBet < minBet || maxBet > 500000) {
-    throw new Error('ከፍተኛው የጠረጴዛ ገደብ ከዝቅተኛው በላይ እና እስከ 500,000 ብር መሆን አለበት።');
+  if (!Number.isFinite(maxBet) || maxBet < minBet || maxBet > 10000000) {
+    throw new Error('ከፍተኛው የጠረጴዛ ገደብ ከዝቅተኛው በላይ እና እስከ 10,000,000 ብር መሆን አለበት።');
   }
 
   const clamp = (val: number, min: number, max: number) =>
@@ -694,7 +1325,7 @@ export async function adminSaveGameConfig(params: {
     coinOdds: clamp(c.coinOdds, 1.2, 4.0),
     luckyOdds: clamp(c.luckyOdds, 5.0, 35.0),
     footballOddsScale: clamp(c.footballOddsScale, 0.7, 1.5),
-    footballMaxOdds: clamp(c.footballMaxOdds, 5, 500),
+    footballMaxOdds: clamp(c.footballMaxOdds, 5, 1000000),
     updatedBy: params.adminUid,
     updatedAt: serverTimestamp(),
   };
@@ -863,16 +1494,15 @@ export async function placeLiveFootballTicket(params: {
   } = params;
 
   const minBet = gameConfig?.minBet ?? 1;
-  const maxBet = gameConfig?.maxBet ?? 500000;
 
-  if (picks.length < 1 || picks.length > 8) {
-    throw new Error('በአንድ ትኬት ከ 1 እስከ 8 ጨዋታዎች ብቻ መምረጥ ይችላሉ።');
+  if (picks.length < 1 || picks.length > 250) {
+    throw new Error('እባክዎ ቢያንስ 1 ጨዋታ ይምረጡ (ከፍተኛ 250 ጨዋታዎች)።');
   }
   if (!Number.isFinite(betAmount) || betAmount < minBet) {
     throw new Error(`ዝቅተኛው የመወራረጃ መጠን ${minBet} ብር ነው።`);
   }
-  if (betAmount > maxBet) {
-    throw new Error(`ከፍተኛው የጠረጴዛ መወራረጃ ገደብ ${maxBet.toLocaleString()} ብር ነው።`);
+  if (betAmount > 10000000) {
+    throw new Error('ከፍተኛው የአንድ ጊዜ መወራረጃ መጠን 10,000,000 ብር ነው።');
   }
   if (betAmount > wallet.balance) {
     throw new Error('በቂ ቀሪ ሂሳብ የለዎትም።');
@@ -906,9 +1536,12 @@ export async function placeLiveFootballTicket(params: {
         : "ጨዋታዎቹ ተጀምረዋል (1')",
   };
 
+  // Cap popularity counter updates per transaction to stay well within Firestore tx limits even on 50+ game slips
+  const trackedPopPicks = picks.slice(0, 20);
+
   try {
     await runTransaction(db, async (tx) => {
-      const popRefs = picks.map((p) => doc(db, 'footballPopularity', p.matchId));
+      const popRefs = trackedPopPicks.map((p) => doc(db, 'footballPopularity', p.matchId));
       const [userSnap, ...popSnaps] = await Promise.all([
         tx.get(userRef),
         ...popRefs.map((ref) => tx.get(ref)),
@@ -922,11 +1555,17 @@ export async function placeLiveFootballTicket(params: {
       }
       const nextBalance = Math.max(0, Number((currentWallet.balance - betAmount).toFixed(2)));
 
-      tx.set(ticketRef, {
+      const ticketOwnerPhone = extractPhoneFromAuthEmail(auth.currentUser?.email);
+      const ticketPayload: Record<string, unknown> = {
         ...initialData,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
-      });
+      };
+      if (ticketOwnerPhone && PHONE_REGEX.test(ticketOwnerPhone)) {
+        ticketPayload.ownerPhone = ticketOwnerPhone;
+      }
+
+      tx.set(ticketRef, ticketPayload);
 
       tx.update(userRef, {
         balance: nextBalance,
@@ -935,7 +1574,7 @@ export async function placeLiveFootballTicket(params: {
         updatedAt: serverTimestamp(),
       });
 
-      picks.forEach((p, idx) => {
+      trackedPopPicks.forEach((p, idx) => {
         const popRef = popRefs[idx];
         const popSnap = popSnaps[idx];
         const addHome =
@@ -1150,7 +1789,9 @@ export async function settleOrCashoutFootballTicket(params: {
       });
 
       const betWon = finalPayout > 0;
-      tx.set(betRef, {
+      const settledOwnerPhone =
+        ticket.ownerPhone || extractPhoneFromAuthEmail(auth.currentUser?.email);
+      const settledBetPayload: Record<string, unknown> = {
         id: ticket.id,
         uid,
         gameType: 'football',
@@ -1162,7 +1803,11 @@ export async function settleOrCashoutFootballTicket(params: {
         won: betWon,
         payout: finalPayout,
         createdAt: serverTimestamp(),
-      });
+      };
+      if (settledOwnerPhone && PHONE_REGEX.test(settledOwnerPhone)) {
+        settledBetPayload.ownerPhone = settledOwnerPhone;
+      }
+      tx.set(betRef, settledBetPayload);
 
       if (betWon) {
         const playerMask = maskPlayerDisplay(currentWallet.displayName);
