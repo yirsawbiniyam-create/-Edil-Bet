@@ -58,7 +58,10 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
   const [depositPhone, setDepositPhone] = useState(registeredPhone || '');
   const [txIdInput, setTxIdInput] = useState('');
   const [isVerifyingDeposit, setIsVerifyingDeposit] = useState(false);
-  const [depositSuccessMsg, setDepositSuccessMsg] = useState<string | null>(null);
+  const [depositFeedback, setDepositFeedback] = useState<{
+    type: 'success' | 'error';
+    text: string;
+  } | null>(null);
 
   // Real-time `received_sms_transactions` lookup state
   const normalizedTx = useMemo(() => normalizeTxId(txIdInput), [txIdInput]);
@@ -378,21 +381,68 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
   const handleDepositSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!settings) {
-      onNotify('አድሚኑ የቴሌብር ስልክ ቁጥሩን እስኪያስገባ ይጠብቁ።', 'error');
+      const msg = 'አድሚኑ የቴሌብር ስልክ ቁጥሩን እስኪያስገባ ይጠብቁ።';
+      setDepositFeedback({ type: 'error', text: msg });
+      onNotify(msg, 'error');
       return;
     }
     if (smsLookupState.state === 'used') {
-      onNotify('ይህ የትራንዛክሽን ቁጥር ከዚህ በፊት ጥቅም ላይ ውሏል!', 'error');
+      const msg = 'ይህ የትራንዛክሽን ቁጥር ከዚህ በፊት ጥቅም ላይ ውሏል!';
+      setDepositFeedback({ type: 'error', text: msg });
+      onNotify(msg, 'error');
       return;
     }
 
     setIsVerifyingDeposit(true);
-    setDepositSuccessMsg(null);
+    setDepositFeedback(null);
 
     try {
+      const cleanTx = normalizeTxId(txIdInput);
+
+      // 1) Try Backend API Route (`POST /api/verify-deposit`) first
+      type VerifyDepositApiResponse = {
+        success?: boolean;
+        serverCredited?: boolean;
+        needsClientFirestoreCheck?: boolean;
+        newAmount?: number;
+        message?: string;
+        error?: string;
+      };
+      let serverData: VerifyDepositApiResponse | null = null;
+      let serverStatus = 0;
+
+      try {
+        const apiResp = await fetch('/api/verify-deposit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ transactionId: cleanTx, userId: user.uid }),
+        });
+        serverStatus = apiResp.status;
+        serverData = (await apiResp.json()) as VerifyDepositApiResponse;
+      } catch {
+        serverData = null;
+      }
+
+      if (serverData?.success && serverData.serverCredited) {
+        const okText =
+          serverData.message ||
+          `በተሳካ ሁኔታ ${formatETB(serverData.newAmount || 0)} ወደ ዋሌትዎ ገብቷል!`;
+        setDepositFeedback({ type: 'success', text: okText });
+        setTxIdInput('');
+        onNotify(okText, 'success');
+        return;
+      }
+
+      if (serverStatus === 400 && serverData?.error) {
+        setDepositFeedback({ type: 'error', text: serverData.error });
+        onNotify(serverData.error, 'error');
+        return;
+      }
+
+      // 2) Execute direct client atomic Firestore `runTransaction` against `received_sms_transactions` & `users`
       const result = await verifyAndCreditSmsTransaction(txIdInput);
-      const okText = `በቴሌብር SMS በራስ-ሰር ተረጋግጧል! ${formatETB(result.amount)} (TX: ${result.txId}) ወደ ዋሌትዎ ገብቷል።`;
-      setDepositSuccessMsg(okText);
+      const okText = `በተሳካ ሁኔታ ${formatETB(result.amount)} (TX: ${result.txId}) ወደ ዋሌትዎ ገብቷል!`;
+      setDepositFeedback({ type: 'success', text: okText });
       setTxIdInput('');
       onNotify(okText, 'success');
     } catch (err) {
@@ -400,7 +450,8 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
       const displayMsg =
         rawMsg && !rawMsg.startsWith('{')
           ? rawMsg
-          : 'ዲፖሲቱን በፋየርስቶር ማረጋገጥ አልተቻለም። እባክዎ ዳግም ይሞክሩ።';
+          : 'ሰርቨር ጋር መገናኘት አልተቻለም ወይም የትራንዛክሽን ቁጥሩ አልተገኘም። እባክዎ እንደገና ይሞክሩ።';
+      setDepositFeedback({ type: 'error', text: displayMsg });
       onNotify(displayMsg, 'error');
     } finally {
       setIsVerifyingDeposit(false);
@@ -529,10 +580,20 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
             </li>
           </ol>
 
-          {depositSuccessMsg && (
-            <div className="p-4 rounded-2xl bg-emerald-500/15 border border-emerald-500/40 flex items-center gap-3 text-emerald-300">
-              <CheckCircle2 className="w-6 h-6 text-emerald-400 shrink-0" />
-              <p className="text-sm font-bold">{depositSuccessMsg}</p>
+          {depositFeedback && (
+            <div
+              className={`p-4 rounded-2xl border flex items-center gap-3 ${
+                depositFeedback.type === 'success'
+                  ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                  : 'bg-rose-500/15 border-rose-500/40 text-rose-300'
+              }`}
+            >
+              {depositFeedback.type === 'success' ? (
+                <CheckCircle2 className="w-6 h-6 text-emerald-400 shrink-0" />
+              ) : (
+                <XCircle className="w-6 h-6 text-rose-400 shrink-0" />
+              )}
+              <p className="text-sm font-bold">{depositFeedback.text}</p>
             </div>
           )}
 
@@ -660,10 +721,10 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
               <ShieldCheck className="w-5 h-5" />
               <span>
                 {isVerifyingDeposit
-                  ? 'በፋየርስቶር ትራንዛክሽን እያረጋገጠ ነው...'
+                  ? 'በማጣራት ላይ...'
                   : smsLookupState.state === 'unused'
-                    ? `በSMS አረጋግጥና ${formatETB(smsLookupState.amount || 0)} ጨምር`
-                    : 'በ received_sms_transactions አረጋግጥና ጨምር'}
+                    ? `ገንዘብ ጫን · Verify Deposit (${formatETB(smsLookupState.amount || 0)})`
+                    : 'ገንዘብ ጫን (Verify Deposit)'}
               </span>
             </button>
           </form>

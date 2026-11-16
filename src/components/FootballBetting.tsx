@@ -33,6 +33,7 @@ import {
 } from 'lucide-react';
 import {
   buildFootballSchedule,
+  fetchAutomatedMatchResults,
   fetchBeSoccerSchedule,
   getNext7DaysEAT,
   LEAGUE_OPTIONS,
@@ -207,11 +208,14 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
   const [liveLimit, setLiveLimit] = useState<number>(7);
   const [popularLimit, setPopularLimit] = useState<number>(10);
 
-  const [scheduleMatches, setScheduleMatches] = useState<ScheduledMatch[]>(() =>
-    buildFootballSchedule(new Date()),
-  );
-  const [syncingSchedule, setSyncingSchedule] = useState<boolean>(false);
+  const [scheduleMatches, setScheduleMatches] = useState<ScheduledMatch[]>([]);
+  const [scheduleLoaded, setScheduleLoaded] = useState<boolean>(false);
+  const [syncingSchedule, setSyncingSchedule] = useState<boolean>(true);
   const [syncedMatchesCount, setSyncedMatchesCount] = useState<number>(0);
+  const [providerLabel, setProviderLabel] = useState<string>('BeSoccer Live + ESPN Global Feed');
+  const [liveMatchesCount, setLiveMatchesCount] = useState<number>(0);
+  const [resultsSyncing, setResultsSyncing] = useState<boolean>(false);
+  const [lastResultsSyncAt, setLastResultsSyncAt] = useState<string | null>(null);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [picks, setPicks] = useState<SlipPick[]>([]);
   const [stakeInput, setStakeInput] = useState<string>('50');
@@ -237,6 +241,9 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
   const settlingRef = useRef<Set<string>>(new Set());
   const liveSimRef = useRef<Record<string, LiveSimSnapshot>>({});
   liveSimRef.current = liveSimMap;
+  const realResultMatchIdsRef = useRef<Set<string>>(new Set());
+  const scheduleMatchesRef = useRef<ScheduledMatch[]>(scheduleMatches);
+  scheduleMatchesRef.current = scheduleMatches;
   const topMatchesRef = useRef<HTMLElement | null>(null);
   const liveEventsRef = useRef<HTMLElement | null>(null);
 
@@ -323,22 +330,40 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
       const result = await fetchBeSoccerSchedule(forceRefresh);
       setScheduleMatches(result.matches);
       setSyncedMatchesCount(result.syncedCount);
+      if (result.providerLabel) {
+        setProviderLabel(result.providerLabel);
+      }
+      setLiveMatchesCount(result.liveCount ?? result.matches.filter((m) => m.isLive).length);
       setLastSyncedAt(result.fetchedAt);
+      setScheduleLoaded(true);
       if (showToast) {
-        onNotify(
-          bi(
-            `የእግር ኳስ ፕሮግራም ከBeSoccer Sync ታድሷል (${result.syncedCount} አሁናዊ ጨዋታዎች)`,
-            `Football 7-day schedule refreshed (${result.syncedCount} live/synced fixtures)`,
-          ),
-          'success',
-        );
+        if (result.fromCache) {
+          onNotify(
+            bi(
+              `የተቀመጠ የኦንላይን ፕሮግራም እየታየ ነው (${result.syncedCount} ጨዋታዎች)`,
+              `Showing cached online fixtures (${result.syncedCount} matches)`,
+            ),
+            'info',
+          );
+        } else {
+          onNotify(
+            bi(
+              `ትክክለኛ የኦንላይን ፕሮግራም ታድሷል (${result.syncedCount} ጨዋታዎች · ${result.providerLabel || 'Live API'})`,
+              `Live schedule refreshed (${result.syncedCount} fixtures · ${result.providerLabel || 'Live API'})`,
+            ),
+            'success',
+          );
+        }
       }
     } catch {
-      if (showToast) {
+      const hadExisting = scheduleMatchesRef.current.length > 0;
+      setScheduleMatches((prev) => (prev.length > 0 ? prev : buildFootballSchedule(new Date())));
+      setScheduleLoaded(true);
+      if (showToast && !hadExisting) {
         onNotify(
           bi(
-            'የአሁናዊ ፕሮግራም ማደስ አልተቻለም፤ መደበኛ ፕሮግራም እየታየ ነው።',
-            'Could not refresh live feed; showing cached schedule.',
+            'የኦንላይን ፕሮግራም ማግኘት አልተቻለም፤ መደበኛ ፕሮግራም ተከፍቷል።',
+            'Unable to reach live feed right now; fallback schedule loaded.',
           ),
           'info',
         );
@@ -356,13 +381,218 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
     return () => window.clearInterval(refreshTimer);
   }, []);
 
-  // Real-time board clock ONLY for local demo LIVE matches (real BeSoccer/ESPN matches keep authentic synced scores)
+  const liveTicketsRef = useRef<FootballTicket[]>(liveTickets);
+  liveTicketsRef.current = liveTickets;
+
+  const syncLiveResultsFromProvider = async (showToast = false) => {
+    const queryMap = new Map<string, { matchId: string; home: string; away: string }>();
+    for (const t of liveTicketsRef.current) {
+      for (const p of t.picks) {
+        if (!queryMap.has(p.matchId)) {
+          queryMap.set(p.matchId, { matchId: p.matchId, home: p.home, away: p.away });
+        }
+      }
+    }
+    for (const m of scheduleMatchesRef.current) {
+      if (m.isLive && queryMap.size < 55 && !queryMap.has(m.id)) {
+        queryMap.set(m.id, { matchId: m.id, home: m.home, away: m.away });
+      }
+    }
+
+    const queryList = Array.from(queryMap.values());
+    if (queryList.length === 0) {
+      if (showToast) {
+        onNotify(
+          bi('አሁን የሚታደስ ቀጥታ ውጤት የለም', 'No active live matches or tickets to sync right now'),
+          'info',
+        );
+      }
+      return;
+    }
+
+    setResultsSyncing(true);
+    try {
+      const results = await fetchAutomatedMatchResults(queryList);
+      const matchedCount = Object.keys(results).length;
+      setLastResultsSyncAt(new Date().toISOString());
+
+      if (matchedCount > 0) {
+        for (const [mid, res] of Object.entries(results)) {
+          if (res.status === 'in' || res.status === 'post') {
+            realResultMatchIdsRef.current.add(mid);
+          }
+        }
+
+        // Update live board scores/minutes from real API results
+        setScheduleMatches((prev) =>
+          prev.map((m) => {
+            const res = results[m.id];
+            if (!res) return m;
+            if (res.status === 'in') {
+              return {
+                ...m,
+                isLive: true,
+                timeframe: 'live',
+                liveMinute: res.minute,
+                liveHomeGoals: res.homeGoals,
+                liveAwayGoals: res.awayGoals,
+                liveHtHomeGoals: res.htHomeGoals ?? m.liveHtHomeGoals,
+                liveHtAwayGoals: res.htAwayGoals ?? m.liveHtAwayGoals,
+                kickoffLabel: `LIVE · ${res.minute}'`,
+              };
+            }
+            if (res.status === 'post') {
+              return {
+                ...m,
+                isLive: false,
+                liveMinute: 90,
+                liveHomeGoals: res.homeGoals,
+                liveAwayGoals: res.awayGoals,
+                liveHtHomeGoals: res.htHomeGoals ?? m.liveHtHomeGoals,
+                liveHtAwayGoals: res.htAwayGoals ?? m.liveHtAwayGoals,
+                kickoffLabel: `FT · ${res.homeGoals}-${res.awayGoals}`,
+              };
+            }
+            return m;
+          }),
+        );
+
+        // Sync active live tickets with authentic live/post match results
+        const ticketUpdates: Record<string, LiveSimSnapshot> = {};
+        for (const ticket of liveTicketsRef.current) {
+          if (settlingRef.current.has(ticket.id)) continue;
+          const snap = liveSimRef.current[ticket.id] || {
+            minute: Math.max(1, ticket.currentMinute || 1),
+            picks: ticket.picks,
+          };
+
+          let anyRealActive = false;
+          let maxRealMinute = snap.minute;
+          let allLegsFinishedReal = snap.picks.length > 0;
+
+          const updatedPicks = snap.picks.map((p) => {
+            const res = results[p.matchId];
+            if (!res || res.status === 'pre') {
+              allLegsFinishedReal = false;
+              return p;
+            }
+            anyRealActive = true;
+            if (res.status === 'in') {
+              allLegsFinishedReal = false;
+              maxRealMinute = Math.max(maxRealMinute, res.minute);
+            } else if (res.status === 'post') {
+              maxRealMinute = 90;
+            }
+            const hg = res.homeGoals;
+            const ag = res.awayGoals;
+            const hth = res.htHomeGoals ?? p.htHomeGoals ?? Math.min(hg, Math.floor(hg * 0.5));
+            const hta = res.htAwayGoals ?? p.htAwayGoals ?? Math.min(ag, Math.floor(ag * 0.5));
+            const nextPick: FootballTicketPick = {
+              ...p,
+              homeGoals: hg,
+              awayGoals: ag,
+              htHomeGoals: hth,
+              htAwayGoals: hta,
+            };
+            return {
+              ...nextPick,
+              hit: checkFootballMarketHit(nextPick.market, hg, ag, nextPick),
+            };
+          });
+
+          if (!anyRealActive) continue;
+
+          const nextMinute = allLegsFinishedReal ? 90 : Math.max(1, Math.min(90, maxRealMinute));
+          ticketUpdates[ticket.id] = {
+            minute: nextMinute,
+            picks: updatedPicks,
+          };
+
+          if (allLegsFinishedReal) {
+            settlingRef.current.add(ticket.id);
+            void settleOrCashoutFootballTicket({
+              uid,
+              ticket,
+              mode: 'full_time',
+              picks: updatedPicks,
+              minute: 90,
+            })
+              .then((res) => {
+                playGameSound(res.status === 'won' ? 'win' : 'lose', soundEnabled);
+                if (res.status === 'won') onWinCelebrate?.();
+                onNotify(
+                  res.status === 'won'
+                    ? bi(
+                        `ትኬት በትክክለኛ የጨዋታ ውጤት አሸነፈ! +${formatETB(res.payout)}`,
+                        `Ticket WON via official FT results! +${formatETB(res.payout)}`,
+                      )
+                    : bi(
+                        `ትኬቱ በ90' ውጤት ተጠናቋል (-${formatETB(ticket.betAmount)})`,
+                        `Ticket settled via official FT results (-${formatETB(ticket.betAmount)})`,
+                      ),
+                  res.status === 'won' ? 'success' : 'info',
+                );
+              })
+              .catch((err) => {
+                settlingRef.current.delete(ticket.id);
+                console.error(err);
+              });
+          } else {
+            const quote = computeFootballCashout(
+              updatedPicks,
+              ticket.betAmount,
+              ticket.potentialPayout,
+              nextMinute,
+            );
+            const scoreSummary = updatedPicks
+              .map((p) => `${p.homeCode} ${p.homeGoals}-${p.awayGoals} ${p.awayCode}`)
+              .join(' | ');
+            void syncLiveFootballTicketProgress({
+              ticketId: ticket.id,
+              picks: updatedPicks,
+              currentMinute: nextMinute,
+              cashoutOffer: quote.offer,
+              cashoutEligible: quote.eligible,
+              resultText: `${nextMinute}' · ${scoreSummary}`,
+            });
+          }
+        }
+
+        if (Object.keys(ticketUpdates).length > 0) {
+          setLiveSimMap((prev) => ({ ...prev, ...ticketUpdates }));
+        }
+      }
+
+      if (showToast) {
+        onNotify(
+          bi(
+            `ቀጥታ ውጤቶች ታድሰዋል (${matchedCount} ጨዋታ ተገናኝቷል)`,
+            `Live match results synced (${matchedCount} fixtures updated)`,
+          ),
+          matchedCount > 0 ? 'success' : 'info',
+        );
+      }
+    } finally {
+      setResultsSyncing(false);
+    }
+  };
+
+  useEffect(() => {
+    void syncLiveResultsFromProvider(false);
+    const liveResultsTimer = window.setInterval(() => {
+      void syncLiveResultsFromProvider(false);
+    }, 30_000);
+    return () => window.clearInterval(liveResultsTimer);
+  }, []);
+
+  // Real-time board clock ONLY for local demo LIVE matches (real RapidAPI/BeSoccer/ESPN matches keep authentic synced scores)
   useEffect(() => {
     const boardTimer = window.setInterval(() => {
       setScheduleMatches((prev) =>
         prev.map((m) => {
           if (!m.isLive) return m;
           if (
+            m.id.startsWith('rapid_') ||
             m.id.startsWith('bslive_') ||
             m.id.startsWith('bsweb_') ||
             m.id.startsWith('bs_')
@@ -460,7 +690,7 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
     });
   }, [liveTickets]);
 
-  // Live Match Ticker for all active 'live' tickets
+  // Live Match Ticker for active tickets (real-time API-driven legs preserve authentic live scores)
   useEffect(() => {
     if (liveTickets.length === 0) return;
 
@@ -477,8 +707,23 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
 
         if (current.minute >= 90) continue;
 
+        const allLegsRealLive =
+          current.picks.length > 0 &&
+          current.picks.every((p) => realResultMatchIdsRef.current.has(p.matchId));
+        if (allLegsRealLive) {
+          // Governed by live API polling (syncLiveResultsFromProvider)
+          continue;
+        }
+
         const nextMinute = Math.min(90, current.minute + 2);
-        const nextPicks = advanceLiveMatchTick(current.picks, houseWinRate, current.minute);
+        const simulatedAll = advanceLiveMatchTick(current.picks, houseWinRate, current.minute);
+        const nextPicks = simulatedAll.map((simPick, idx) => {
+          const orig = current.picks[idx];
+          if (orig && realResultMatchIdsRef.current.has(orig.matchId)) {
+            return orig;
+          }
+          return simPick;
+        });
         const goalScored = nextPicks.some(
           (p, idx) =>
             p.homeGoals !== current.picks[idx]?.homeGoals ||
@@ -1931,8 +2176,11 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
 
         <div className="flex items-center gap-2 shrink-0">
           {syncedMatchesCount > 0 && (
-            <span className="hidden sm:inline font-mono-num text-[11px] font-bold text-[#0E8A38]">
-              {syncedMatchesCount} {bi('አሁናዊ ጨዋታ', 'Synced')}
+            <span
+              title={providerLabel}
+              className="hidden md:inline font-mono-num text-[11px] font-bold text-[#0E8A38] max-w-[240px] truncate"
+            >
+              {syncedMatchesCount} {bi('አሁናዊ', 'Synced')} · {providerLabel}
             </span>
           )}
           <button
@@ -1941,6 +2189,7 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
             onClick={() => {
               playGameSound('click', soundEnabled);
               void loadLiveSchedule(true, true);
+              void syncLiveResultsFromProvider(false);
             }}
             className="px-2.5 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 border border-slate-200 text-[11px] font-extrabold text-[#0E8A38] flex items-center gap-1 transition cursor-pointer disabled:opacity-50 whitespace-nowrap"
           >
@@ -2204,18 +2453,52 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
             ref={topMatchesRef}
             className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs"
           >
-            <div className="bg-[#0E8A38] text-white px-4 py-2.5 flex items-center justify-between">
-              <h3 className="text-sm font-extrabold flex items-center gap-2">
-                <span aria-hidden="true" className="text-[#9AD84B] tracking-widest text-xs">
-                  •••
+            <div className="bg-[#0E8A38] text-white px-4 py-2.5 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2 min-w-0">
+                <h3 className="text-sm font-extrabold flex items-center gap-2">
+                  <span aria-hidden="true" className="text-[#9AD84B] tracking-widest text-xs">
+                    •••
+                  </span>
+                  <span>{bi('ዋና ጨዋታዎች · Online Real Program', 'Top Matches · Online Program')}</span>
+                </h3>
+                <span className="text-[11px] font-semibold text-emerald-100 truncate">
+                  ({providerLabel})
                 </span>
-                <span>{bi('ዋና ጨዋታዎች · Top Matches', 'Top Matches')}</span>
-              </h3>
-              <span className="text-[11px] font-mono-num text-emerald-100">
-                {topMatchesCarousel.length} {bi('ጨዋታ', 'matches')}
-              </span>
+              </div>
+              <div className="flex items-center gap-2">
+                {liveMatchesCount > 0 && (
+                  <span className="text-[11px] font-mono-num font-black text-[#9AD84B] flex items-center gap-1">
+                    <Radio className="w-3.5 h-3.5" />
+                    {liveMatchesCount} LIVE
+                  </span>
+                )}
+                <span className="text-[11px] font-mono-num text-emerald-100">
+                  {syncedMatchesCount > 0
+                    ? `${syncedMatchesCount} ${bi('ኦንላይን ጨዋታ', 'online')}`
+                    : `${topMatchesCarousel.length} ${bi('ጨዋታ', 'matches')}`}
+                </span>
+                <button
+                  type="button"
+                  disabled={syncingSchedule}
+                  onClick={() => {
+                    void loadLiveSchedule(true, true);
+                    void syncLiveResultsFromProvider(false);
+                  }}
+                  className="px-2 py-1 rounded bg-black/25 hover:bg-black/40 text-[11px] font-bold text-white cursor-pointer disabled:opacity-50 transition"
+                >
+                  {syncingSchedule ? bi('በማደስ ላይ...', 'Syncing...') : bi('አድስ', 'Refresh')}
+                </button>
+              </div>
             </div>
 
+            {!scheduleLoaded && scheduleMatches.length === 0 ? (
+              <div className="p-6 text-center text-xs font-bold text-slate-600 bg-[#F3F4F6]">
+                {bi(
+                  'ትክክለኛ የኦንላይን የእግር ኳስ ፕሮግራም ከቀጥታ API ሰርቨር በመጫን ላይ ነው...',
+                  'Loading real-time online football schedule, odds & live matches...',
+                )}
+              </div>
+            ) : (
             <div className="p-3 bg-[#F3F4F6] flex gap-3 overflow-x-auto snap-x no-scrollbar">
               {topMatchesCarousel.map((match) => {
                 const selectedPick = picks.find((p) => p.match.id === match.id);
@@ -2346,6 +2629,7 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
                 );
               })}
             </div>
+            )}
           </section>
 
           {/* MAIN 2-COLUMN SPORTSBOOK BOARD + BETSLIP */}
@@ -2526,8 +2810,13 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
                   </div>
 
                   {visibleLiveRows.length === 0 ? (
-                    <div className="p-6 text-center text-xs text-slate-600">
-                      {bi('አሁን ላይቭ ጨዋታ የለም', 'No live events match your search right now.')}
+                    <div className="p-6 text-center text-xs text-slate-600 space-y-2">
+                      <p className="font-semibold text-slate-700">
+                        {bi(
+                          'በዚህ ሰዓት በቀጥታ እየተካሄደ ያለ ኦንላይን ጨዋታ የለም — የዛሬ እና የ7 ቀናት ኦንላይን ፕሮግራሞች ላይ በቀጥታ መወራረድ ይችላሉ።',
+                          'No live online matches in progress right at this minute — place your bets on today’s & 7-day real online fixtures above/below.',
+                        )}
+                      </p>
                     </div>
                   ) : (
                     <div>{visibleLiveRows.map((m) => renderSportsbookTableRow(m, true))}</div>
@@ -2779,7 +3068,7 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
       {/* TAB 2: LIVE MATCH & CASHOUT CENTER */}
       {subTab === 'live' && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <button
               type="button"
               onClick={() => {
@@ -2791,6 +3080,26 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
               <ArrowLeft className="w-4 h-4 text-[#0E8A38]" />
               <span>{bi('ወደ ጨዋታዎች ተመለስ', 'Back to Matches')}</span>
             </button>
+
+            <div className="flex items-center gap-2">
+              {lastResultsSyncAt && (
+                <span className="hidden sm:inline text-[11px] font-mono-num text-slate-500">
+                  {bi('ውጤት ታድሷል', 'Synced')} · {new Date(lastResultsSyncAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </span>
+              )}
+              <button
+                type="button"
+                disabled={resultsSyncing}
+                onClick={() => {
+                  playGameSound('click', soundEnabled);
+                  void syncLiveResultsFromProvider(true);
+                }}
+                className="min-h-[42px] px-3.5 py-2 rounded-lg bg-white hover:bg-emerald-50 border border-slate-200 text-[#0E8A38] text-xs font-black flex items-center gap-1.5 cursor-pointer transition shadow-2xs disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${resultsSyncing ? 'animate-spin' : ''}`} />
+                <span>{resultsSyncing ? bi('ውጤት በማምጣት ላይ...', 'Syncing Results...') : bi('ቀጥታ ውጤት አድስ', 'Sync Live Results')}</span>
+              </button>
+            </div>
           </div>
 
           <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-wrap items-center justify-between gap-3 shadow-xs">

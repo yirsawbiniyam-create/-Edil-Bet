@@ -60,6 +60,11 @@ interface ScheduleCache {
   payload: {
     matches: ExternalMatchDTO[];
     source: string;
+    providerLabel: string;
+    providersActive: string[];
+    hasRapidApi: boolean;
+    liveCount: number;
+    upcomingCount: number;
     besoccerNote: string;
     daysCovered: number;
     fetchedAt: string;
@@ -81,15 +86,20 @@ function americanToDecimal(raw: string | number | undefined): number | null {
 }
 
 function makeCode(name: string, abbr?: string): string {
-  if (abbr && abbr.trim().length >= 2 && abbr.trim().length <= 4) {
-    return abbr.trim().toUpperCase();
+  if (abbr) {
+    const cleanAbbr = abbr.replace(/[^a-zA-Z0-9]/g, '').trim().toUpperCase();
+    if (cleanAbbr.length >= 2 && cleanAbbr.length <= 4) {
+      return cleanAbbr;
+    }
   }
   const clean = name.replace(/[^a-zA-Z0-9 ]/g, '').trim();
   const words = clean.split(/\s+/).filter(Boolean);
   if (words.length >= 2) {
-    return (words[0][0] + words[1].slice(0, 2)).toUpperCase();
+    const combined = (words[0][0] + words[1].slice(0, 2)).toUpperCase();
+    return combined.length >= 2 ? combined : combined.padEnd(2, 'F');
   }
-  return (clean.slice(0, 3) || 'FC').toUpperCase();
+  const single = (clean.slice(0, 3) || 'FC').toUpperCase();
+  return single.length >= 2 ? single : single.padEnd(2, 'C');
 }
 
 function getEatDateKey(date: Date): string {
@@ -105,31 +115,38 @@ function mapLeagueFromName(name: string): {
   featured: boolean;
 } {
   const lower = name.toLowerCase();
-  if (lower.includes('premier league') && !lower.includes('ethiopia')) {
-    return { league: 'epl', leagueLabel: 'Premier League', tier: 1, tierLabel: 'ደረጃ 1', featured: true };
-  }
   if (lower.includes('ethiopia')) {
     return { league: 'ethiopia', leagueLabel: 'ኢትዮጵያ ፕሪሚየር ሊግ', tier: 1, tierLabel: 'ደረጃ 1', featured: true };
   }
-  if (lower.includes('laliga') || lower.includes('la liga') || lower.includes('primera')) {
+  if (lower.includes('premier league') && !lower.includes('cup')) {
+    return { league: 'epl', leagueLabel: 'Premier League', tier: 1, tierLabel: 'ደረጃ 1', featured: true };
+  }
+  if (lower === 'laliga' || lower === 'la liga' || lower.includes('laliga ea') || lower.includes('primera división')) {
     return { league: 'laliga', leagueLabel: 'La Liga', tier: 1, tierLabel: 'ደረጃ 1', featured: true };
   }
-  if (lower.includes('serie a')) {
+  if (lower === 'serie a' || lower.includes('serie a enilive') || lower.includes('serie a tim')) {
     return { league: 'seriea', leagueLabel: 'Serie A', tier: 1, tierLabel: 'ደረጃ 1', featured: true };
   }
-  if (lower.includes('bundesliga')) {
+  if (lower === 'bundesliga' || lower.startsWith('1. bundesliga')) {
     return { league: 'bundesliga', leagueLabel: 'Bundesliga', tier: 1, tierLabel: 'ደረጃ 1', featured: true };
   }
-  if (lower.includes('ligue 1')) {
+  if (lower === 'ligue 1' || lower.includes('ligue 1 mcdonald')) {
     return { league: 'ligue1', leagueLabel: 'Ligue 1', tier: 2, tierLabel: 'ደረጃ 2', featured: false };
   }
-  if (lower.includes('champions league')) {
+  if (lower.includes('champions league') && !lower.includes('caf') && !lower.includes('afc') && !lower.includes('women')) {
     return { league: 'ucl', leagueLabel: 'Champions League', tier: 2, tierLabel: 'ደረጃ 2', featured: true };
   }
   if (lower.includes('europa league')) {
     return { league: 'uel', leagueLabel: 'Europa League', tier: 2, tierLabel: 'ደረጃ 2', featured: false };
   }
-  return { league: 'intl', leagueLabel: name || 'BeSoccer Global', tier: 3, tierLabel: 'ደረጃ 3', featured: false };
+  const featuredIntl =
+    lower.includes('nations league') ||
+    lower.includes('world cup') ||
+    lower.includes('afcon') ||
+    lower.includes('africa cup') ||
+    lower.includes('caf champions') ||
+    lower.includes('copa del rey');
+  return { league: 'intl', leagueLabel: (name || 'Global Football').slice(0, 80), tier: 3, tierLabel: 'ደረጃ 3', featured: featuredIntl };
 }
 
 function mapLeagueFromUid(uid: string | undefined, fallbackSlug?: string): {
@@ -300,9 +317,9 @@ function parseBeSoccerHtmlFixtures(html: string, now: Date): ExternalMatchDTO[] 
   const seen = new Set<string>();
   const todayKey = getEatDateKey(now);
 
-  // Locate every competition header (`panel-title`) to associate matches with their league
+  // Locate every competition header (`panel-title`) to associate matches with their real league
   const panelHeaders: Array<{ pos: number; leagueName: string }> = [];
-  const panelRe = /<div[^>]*class="[^"]*panel-title[^"]*"[^>]*>([\s\S]*?)<\/div>\s*<\/div>/gi;
+  const panelRe = /<div[^>]*class="[^"]*panel-title[^"]*"[^>]*>([\s\S]{1,500}?)<\/div>/gi;
   let pm: RegExpExecArray | null;
   while ((pm = panelRe.exec(html)) !== null) {
     const clean = stripTags(pm[1]).slice(0, 80);
@@ -410,10 +427,11 @@ function parseBeSoccerHtmlFixtures(html: string, now: Date): ExternalMatchDTO[] 
         ? hrefMatch[1]
         : `https://www.besoccer.com/search?q=${encodeURIComponent(`${home} ${away}`)}`;
 
+    const safeAttrId = idAttrMatch?.[1] ? idAttrMatch[1].replace(/[^a-zA-Z0-9_-]/g, '') : '';
     results.push({
-      id: `bsweb_${idAttrMatch?.[1] || hashSeed(dedupeKey)}`,
+      id: `bsweb_${safeAttrId || hashSeed(dedupeKey)}`,
       league: lgMeta.league,
-      leagueLabel: compName === 'BeSoccer Live Program' ? lgMeta.leagueLabel : compName,
+      leagueLabel: (compName === 'BeSoccer Live Program' ? lgMeta.leagueLabel : compName).slice(0, 80),
       tier: lgMeta.tier,
       tierLabel: lgMeta.tierLabel,
       timeframe: tf,
@@ -425,8 +443,8 @@ function parseBeSoccerHtmlFixtures(html: string, now: Date): ExternalMatchDTO[] 
       liveMinute: liveMin,
       liveHomeGoals: isLive ? Number(r1Match?.[1] || 0) : undefined,
       liveAwayGoals: isLive ? Number(r2Match?.[1] || 0) : undefined,
-      home,
-      away,
+      home: home.slice(0, 80),
+      away: away.slice(0, 80),
       homeCode: makeCode(home),
       awayCode: makeCode(away),
       homeLogo: shields[0],
@@ -541,7 +559,7 @@ async function tryBeSoccer7DaysDirect(): Promise<{
     }
   }
 
-  // Direct BeSoccer Web Program Scraping (Homepage + Upcoming Days)
+  // Direct BeSoccer Web Program Scraping (Today + Upcoming 6 Days, spaced + retried to avoid empty CDN nodes)
   try {
     const besoccerHeaders = {
       'User-Agent':
@@ -549,35 +567,42 @@ async function tryBeSoccer7DaysDirect(): Promise<{
       Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       'Accept-Language': 'en-US,en;q=0.9',
     };
-    const dayUrls = [
-      'https://www.besoccer.com/',
-      ...Array.from({ length: 4 }, (_, i) => {
-        const ymd = getEatDateKey(new Date(now.getTime() + (i + 1) * 86400_000));
-        return `https://www.besoccer.com/livescore/${ymd}`;
-      }),
-    ];
+    const fetchBeSoccerHtml = async (url: string): Promise<string> => {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const r = await fetch(url, {
+            headers: besoccerHeaders,
+            signal: AbortSignal.timeout(5500),
+          });
+          if (r.ok) {
+            const text = await r.text();
+            if (text.length > 2000) return text;
+          }
+        } catch {
+          // retry once
+        }
+        await new Promise((resolve) => setTimeout(resolve, 160));
+      }
+      return '';
+    };
 
-    const pageResps = await Promise.allSettled(
-      dayUrls.map(async (u) => {
-        const r = await fetch(u, {
-          headers: besoccerHeaders,
-          signal: AbortSignal.timeout(5500),
-        });
-        if (!r.ok) return '';
-        return await r.text();
-      }),
-    );
+    const dayUrls = Array.from({ length: 7 }, (_, i) => {
+      const ymd = getEatDateKey(new Date(now.getTime() + i * 86400_000));
+      return `https://www.besoccer.com/livescore/${ymd}`;
+    });
 
     const webMatches: ExternalMatchDTO[] = [];
     const seenKeys = new Set<string>();
-    for (const pr of pageResps) {
-      if (pr.status !== 'fulfilled' || !pr.value) continue;
-      for (const item of parseBeSoccerHtmlFixtures(pr.value, now)) {
+    for (const u of dayUrls) {
+      const html = await fetchBeSoccerHtml(u);
+      if (!html) continue;
+      for (const item of parseBeSoccerHtmlFixtures(html, now)) {
         const key = `${item.home.toLowerCase()}_${item.away.toLowerCase()}_${item.dateKey}`;
         if (seenKeys.has(key)) continue;
         seenKeys.add(key);
         webMatches.push(item);
       }
+      await new Promise((resolve) => setTimeout(resolve, 90));
     }
 
     if (webMatches.length > 0) {
@@ -639,7 +664,7 @@ async function fetch7DayLiveSoccerFeed(): Promise<ExternalMatchDTO[]> {
   const now = new Date();
   const fmtCompactDate = (d: Date) => d.toISOString().slice(0, 10).replace(/-/g, '');
 
-  // Query all 7 upcoming days (day 0 through day 6) + top club & European leagues
+  // Query all 7 upcoming days (day 0 through day 6) + top club & European leagues across upcoming dates
   const dayEndpoints = Array.from({ length: 7 }, (_, offset) => {
     const dt = new Date(now.getTime() + offset * 86400_000);
     return {
@@ -651,15 +676,26 @@ async function fetch7DayLiveSoccerFeed(): Promise<ExternalMatchDTO[]> {
     };
   });
 
+  const topClubSlugs = ['eng.1', 'esp.1', 'ita.1', 'ger.1', 'fra.1'] as const;
+  const upcomingLeagueDates = [4, 5, 6].map((offset) =>
+    fmtCompactDate(new Date(now.getTime() + offset * 86400_000)),
+  );
+
   const leagueEndpoints: Array<{ url: string; slug?: string }> = [
-    { url: 'https://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/scoreboard', slug: 'eng.1' },
-    { url: 'https://site.api.espn.com/apis/site/v2/sports/soccer/esp.1/scoreboard', slug: 'esp.1' },
-    { url: 'https://site.api.espn.com/apis/site/v2/sports/soccer/ita.1/scoreboard', slug: 'ita.1' },
-    { url: 'https://site.api.espn.com/apis/site/v2/sports/soccer/ger.1/scoreboard', slug: 'ger.1' },
-    { url: 'https://site.api.espn.com/apis/site/v2/sports/soccer/fra.1/scoreboard', slug: 'fra.1' },
+    ...topClubSlugs.map((slug) => ({
+      url: `https://site.api.espn.com/apis/site/v2/sports/soccer/${slug}/scoreboard`,
+      slug,
+    })),
+    ...topClubSlugs.flatMap((slug) =>
+      upcomingLeagueDates.map((ymd) => ({
+        url: `https://site.api.espn.com/apis/site/v2/sports/soccer/${slug}/scoreboard?dates=${ymd}`,
+        slug,
+      })),
+    ),
     { url: 'https://site.api.espn.com/apis/site/v2/sports/soccer/uefa.champions/scoreboard', slug: 'uefa.champions' },
     { url: 'https://site.api.espn.com/apis/site/v2/sports/soccer/uefa.europa/scoreboard', slug: 'uefa.europa' },
     { url: 'https://site.api.espn.com/apis/site/v2/sports/soccer/uefa.nations/scoreboard', slug: 'uefa.nations' },
+    { url: 'https://site.api.espn.com/apis/site/v2/sports/soccer/caf.champions/scoreboard', slug: 'caf.champions' },
     { url: 'https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.friendly/scoreboard', slug: 'fifa.friendly' },
   ];
 
@@ -804,6 +840,292 @@ async function fetch7DayLiveSoccerFeed(): Promise<ExternalMatchDTO[]> {
     bucketCounts[m.timeframe] += 1;
     return true;
   });
+}
+
+interface RapidApiFixtureItem {
+  fixture?: {
+    id?: number;
+    date?: string;
+    status?: { short?: string; elapsed?: number | null };
+  };
+  league?: {
+    name?: string;
+    country?: string;
+  };
+  teams?: {
+    home?: { name?: string; logo?: string };
+    away?: { name?: string; logo?: string };
+  };
+  goals?: { home?: number | null; away?: number | null };
+  score?: { halftime?: { home?: number | null; away?: number | null } };
+}
+
+interface RapidApiOddItem {
+  fixture?: { id?: number };
+  bookmakers?: Array<{
+    bets?: Array<{
+      id?: number;
+      name?: string;
+      values?: Array<{ value?: string; odd?: string }>;
+    }>;
+  }>;
+}
+
+function getRapidApiAuthConfig(): {
+  baseUrl: string;
+  headers: Record<string, string>;
+} | null {
+  const rapidKey = process.env.RAPIDAPI_FOOTBALL_KEY?.trim();
+  const rapidHost = process.env.RAPIDAPI_FOOTBALL_HOST?.trim() || 'api-football-v1.p.rapidapi.com';
+  if (rapidKey) {
+    return {
+      baseUrl: `https://${rapidHost}/v3`,
+      headers: {
+        'x-rapidapi-key': rapidKey,
+        'x-rapidapi-host': rapidHost,
+      },
+    };
+  }
+  const directKey = process.env.API_FOOTBALL_KEY?.trim();
+  if (directKey) {
+    return {
+      baseUrl: 'https://v3.football.api-sports.io',
+      headers: {
+        'x-apisports-key': directKey,
+      },
+    };
+  }
+  return null;
+}
+
+async function tryRapidApiFootball7Days(): Promise<{
+  matches: ExternalMatchDTO[];
+  active: boolean;
+}> {
+  const cfg = getRapidApiAuthConfig();
+  if (!cfg) return { matches: [], active: false };
+
+  const now = new Date();
+  const todayKey = getEatDateKey(now);
+  const dateKeys = Array.from({ length: 7 }, (_, i) =>
+    getEatDateKey(new Date(now.getTime() + i * 86400_000)),
+  );
+
+  try {
+    const [liveRes, ...dayFixturesAndOdds] = await Promise.allSettled([
+      fetch(`${cfg.baseUrl}/fixtures?live=all&timezone=Africa/Addis_Ababa`, {
+        headers: cfg.headers,
+        signal: AbortSignal.timeout(6500),
+      }).then((r) => (r.ok ? r.json() : null)),
+      ...dateKeys.map((ymd) =>
+        fetch(`${cfg.baseUrl}/fixtures?date=${ymd}&timezone=Africa/Addis_Ababa`, {
+          headers: cfg.headers,
+          signal: AbortSignal.timeout(6500),
+        }).then((r) => (r.ok ? r.json() : null)),
+      ),
+      ...dateKeys.slice(0, 2).map((ymd) =>
+        fetch(`${cfg.baseUrl}/odds?date=${ymd}&timezone=Africa/Addis_Ababa`, {
+          headers: cfg.headers,
+          signal: AbortSignal.timeout(6500),
+        }).then((r) => (r.ok ? r.json() : null)),
+      ),
+    ]);
+
+    const oddsByFixtureId = new Map<
+      number,
+      { homeOdd: number; drawOdd: number; awayOdd: number; over25Odd?: number; under25Odd?: number }
+    >();
+
+    for (const entry of dayFixturesAndOdds.slice(dateKeys.length)) {
+      if (entry.status !== 'fulfilled' || !entry.value) continue;
+      const list = Array.isArray(entry.value.response)
+        ? (entry.value.response as RapidApiOddItem[])
+        : [];
+      for (const item of list) {
+        const fid = item.fixture?.id;
+        if (!fid) continue;
+        const bets = item.bookmakers?.[0]?.bets || [];
+        const matchWinner = bets.find((b) => b.id === 1 || /match winner/i.test(b.name || ''));
+        const overUnder = bets.find((b) => b.id === 5 || /goals over\/under/i.test(b.name || ''));
+        const hOdd = Number(matchWinner?.values?.find((v) => v.value === 'Home')?.odd);
+        const dOdd = Number(matchWinner?.values?.find((v) => v.value === 'Draw')?.odd);
+        const aOdd = Number(matchWinner?.values?.find((v) => v.value === 'Away')?.odd);
+        const o25 = Number(overUnder?.values?.find((v) => v.value === 'Over 2.5')?.odd);
+        const u25 = Number(overUnder?.values?.find((v) => v.value === 'Under 2.5')?.odd);
+        if (Number.isFinite(hOdd) && Number.isFinite(dOdd) && Number.isFinite(aOdd)) {
+          oddsByFixtureId.set(fid, {
+            homeOdd: clampOdd(hOdd),
+            drawOdd: clampOdd(dOdd),
+            awayOdd: clampOdd(aOdd),
+            over25Odd: Number.isFinite(o25) ? clampOdd(o25) : undefined,
+            under25Odd: Number.isFinite(u25) ? clampOdd(u25) : undefined,
+          });
+        }
+      }
+    }
+
+    const rawFixtures: RapidApiFixtureItem[] = [];
+    if (liveRes.status === 'fulfilled' && Array.isArray(liveRes.value?.response)) {
+      rawFixtures.push(...(liveRes.value.response as RapidApiFixtureItem[]));
+    }
+    for (const dayEntry of dayFixturesAndOdds.slice(0, dateKeys.length)) {
+      if (dayEntry.status === 'fulfilled' && Array.isArray(dayEntry.value?.response)) {
+        rawFixtures.push(...(dayEntry.value.response as RapidApiFixtureItem[]));
+      }
+    }
+
+    const LIVE_SHORTS = new Set(['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE', 'INT']);
+    const FINISHED_SHORTS = new Set(['FT', 'AET', 'PEN', 'AWD', 'WO', 'CANC', 'ABD']);
+
+    const seenIds = new Set<number>();
+    const results: ExternalMatchDTO[] = [];
+
+    for (const item of rawFixtures) {
+      const fid = item.fixture?.id;
+      const home = item.teams?.home?.name?.trim();
+      const away = item.teams?.away?.name?.trim();
+      if (!fid || !home || !away || seenIds.has(fid)) continue;
+
+      const st = String(item.fixture?.status?.short || 'NS').toUpperCase();
+      if (FINISHED_SHORTS.has(st)) continue;
+      seenIds.add(fid);
+
+      const isLive = LIVE_SHORTS.has(st);
+      const kickoff = item.fixture?.date ? new Date(item.fixture.date) : now;
+      const diffHours = (kickoff.getTime() - now.getTime()) / 3600_000;
+      const dateKey = getEatDateKey(kickoff);
+
+      let tf: TimeframeKey;
+      if (isLive) tf = 'live';
+      else if (diffHours >= -0.25 && diffHours <= 6) tf = 'hourly';
+      else if (dateKey === todayKey || diffHours <= 24) tf = 'daily';
+      else if (diffHours <= 168) tf = 'weekly';
+      else tf = 'monthly';
+
+      const compName = item.league?.name || 'Football';
+      const lgMeta = mapLeagueFromName(
+        item.league?.country && !compName.toLowerCase().includes(item.league.country.toLowerCase())
+          ? `${item.league.country} ${compName}`
+          : compName,
+      );
+      const fallbackOdds = synthesizeBalancedOdds(`rapid-${fid}-${home}-${away}`);
+      const realOdds = oddsByFixtureId.get(fid);
+      const liveMin = isLive ? Math.min(89, Math.max(1, item.fixture?.status?.elapsed || 1)) : undefined;
+
+      results.push({
+        id: `rapid_${fid}`,
+        league: lgMeta.league,
+        leagueLabel: compName.slice(0, 80),
+        tier: lgMeta.tier,
+        tierLabel: lgMeta.tierLabel,
+        timeframe: tf,
+        dateKey,
+        kickoffIso: kickoff.toISOString(),
+        kickoffLabel: formatAddisKickoff(kickoff, now, tf, liveMin),
+        scheduleGroupLabel: getGroupLabel(tf),
+        isLive,
+        liveMinute: liveMin,
+        liveHomeGoals: isLive ? Number(item.goals?.home ?? 0) : undefined,
+        liveAwayGoals: isLive ? Number(item.goals?.away ?? 0) : undefined,
+        home: home.slice(0, 80),
+        away: away.slice(0, 80),
+        homeCode: makeCode(home),
+        awayCode: makeCode(away),
+        homeLogo: item.teams?.home?.logo,
+        awayLogo: item.teams?.away?.logo,
+        homeOdd: realOdds?.homeOdd ?? fallbackOdds.homeOdd,
+        drawOdd: realOdds?.drawOdd ?? fallbackOdds.drawOdd,
+        awayOdd: realOdds?.awayOdd ?? fallbackOdds.awayOdd,
+        over25Odd: realOdds?.over25Odd ?? fallbackOdds.over25Odd,
+        under25Odd: realOdds?.under25Odd ?? fallbackOdds.under25Odd,
+        ggOdd: fallbackOdds.ggOdd,
+        ngOdd: fallbackOdds.ngOdd,
+        featured: lgMeta.featured || isLive,
+        besoccerUrl: `https://www.besoccer.com/search?q=${encodeURIComponent(`${home} ${away}`)}`,
+        sourceName: 'RapidAPI · API-Football Live Feed',
+      });
+    }
+
+    return { matches: results.slice(0, 450), active: results.length > 0 };
+  } catch {
+    return { matches: [], active: false };
+  }
+}
+
+interface TheOddsApiEvent {
+  id?: string;
+  sport_title?: string;
+  commence_time?: string;
+  home_team?: string;
+  away_team?: string;
+  bookmakers?: Array<{
+    title?: string;
+    markets?: Array<{
+      key?: string;
+      outcomes?: Array<{ name?: string; price?: number; point?: number }>;
+    }>;
+  }>;
+}
+
+let theOddsApiCache: { expiresAt: number; events: TheOddsApiEvent[] } | null = null;
+
+async function tryTheOddsApiEnrichment(matches: ExternalMatchDTO[]): Promise<boolean> {
+  const apiKey = process.env.THE_ODDS_API_KEY?.trim();
+  if (!apiKey || matches.length === 0) return false;
+
+  try {
+    let events: TheOddsApiEvent[];
+    if (theOddsApiCache && theOddsApiCache.expiresAt > Date.now()) {
+      events = theOddsApiCache.events;
+    } else {
+      const resp = await fetch(
+        `https://api.the-odds-api.com/v4/sports/soccer/odds?apiKey=${encodeURIComponent(apiKey)}&regions=eu,uk&markets=h2h,totals&oddsFormat=decimal`,
+        { signal: AbortSignal.timeout(5500) },
+      );
+      if (!resp.ok) return false;
+      const parsed = (await resp.json()) as TheOddsApiEvent[];
+      if (!Array.isArray(parsed) || parsed.length === 0) return false;
+      events = parsed;
+      // Cache for 10 minutes to preserve The Odds API monthly request quota
+      theOddsApiCache = { expiresAt: Date.now() + 600_000, events };
+    }
+
+    let updatedAny = false;
+    for (const m of matches) {
+      const matched = events.find(
+        (ev) =>
+          ev.home_team &&
+          ev.away_team &&
+          teamsMatch(ev.home_team, m.home) &&
+          teamsMatch(ev.away_team, m.away),
+      );
+      if (!matched) continue;
+      const markets = matched.bookmakers?.[0]?.markets || [];
+      const h2h = markets.find((mk) => mk.key === 'h2h')?.outcomes || [];
+      const totals = markets.find((mk) => mk.key === 'totals')?.outcomes || [];
+
+      const homeOut = h2h.find((o) => o.name && teamsMatch(o.name, matched.home_team || ''));
+      const awayOut = h2h.find((o) => o.name && teamsMatch(o.name, matched.away_team || ''));
+      const drawOut = h2h.find((o) => /draw/i.test(o.name || ''));
+      const over25Out = totals.find((o) => /over/i.test(o.name || '') && o.point === 2.5);
+      const under25Out = totals.find((o) => /under/i.test(o.name || '') && o.point === 2.5);
+
+      if (homeOut?.price && awayOut?.price && drawOut?.price) {
+        m.homeOdd = clampOdd(homeOut.price);
+        m.drawOdd = clampOdd(drawOut.price);
+        m.awayOdd = clampOdd(awayOut.price);
+        updatedAny = true;
+      }
+      if (over25Out?.price && under25Out?.price) {
+        m.over25Odd = clampOdd(over25Out.price);
+        m.under25Odd = clampOdd(under25Out.price);
+        updatedAny = true;
+      }
+    }
+    return updatedAny || events.length > 0;
+  } catch {
+    return false;
+  }
 }
 
 export interface H2HMatchItem {
@@ -1545,7 +1867,264 @@ async function startServer() {
     res.json({ items: recent });
   });
 
-  app.get('/api/besoccer/schedule', async (req, res) => {
+  // Backend Deposit Verification API Route (`POST /api/verify-deposit`)
+  app.post('/api/verify-deposit', async (req, res) => {
+    try {
+      const { transactionId, userId } = (req.body || {}) as {
+        transactionId?: string;
+        userId?: string;
+      };
+
+      const txId = String(transactionId || '')
+        .trim()
+        .toUpperCase()
+        .replace(/[^A-Z0-9]/g, '');
+      const uid = String(userId || '').trim();
+
+      if (!txId || !uid) {
+        res.status(400).json({
+          success: false,
+          error: 'Transaction ID and User ID are required',
+        });
+        return;
+      }
+
+      if (!/^[A-Z0-9]{6,24}$/.test(txId)) {
+        res.status(400).json({
+          success: false,
+          error: 'ትራንሳክሽን ቁጥሩ ከ6 እስከ 24 ፊደል ወይም ቁጥር መሆን አለበት',
+        });
+        return;
+      }
+
+      if (!/^[a-zA-Z0-9_-]{1,128}$/.test(uid)) {
+        res.status(400).json({
+          success: false,
+          error: 'Invalid User ID format',
+        });
+        return;
+      }
+
+      // 1) If Firebase service account credentials are configured on backend, execute atomic Firestore REST transaction
+      const cfg = loadFirebaseAppletConfig();
+      const projectId = process.env.FIREBASE_PROJECT_ID?.trim() || cfg.projectId;
+      const databaseId = cfg.firestoreDatabaseId || '(default)';
+      const accessToken = projectId ? await getGoogleServiceAccountAccessToken() : null;
+
+      if (projectId && accessToken) {
+        const dbRoot = `projects/${projectId}/databases/${databaseId}/documents`;
+        const docsApiBase = `https://firestore.googleapis.com/v1/${dbRoot}`;
+        const txDocName = `${dbRoot}/received_sms_transactions/${txId}`;
+        const usedTxDocName = `${dbRoot}/usedTxIds/${txId}`;
+        const userDocName = `${dbRoot}/users/${uid}`;
+
+        const beginResp = await fetch(`${docsApiBase}:beginTransaction`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ options: { readWrite: {} } }),
+          signal: AbortSignal.timeout(5500),
+        });
+
+        if (beginResp.ok) {
+          const { transaction: txToken } = (await beginResp.json()) as { transaction?: string };
+          if (txToken) {
+            const rollback = async () => {
+              await fetch(`${docsApiBase}:rollback`, {
+                method: 'POST',
+                headers: {
+                  Authorization: `Bearer ${accessToken}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ transaction: txToken }),
+              }).catch(() => undefined);
+            };
+
+            const batchGetResp = await fetch(`${docsApiBase}:batchGet`, {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                documents: [txDocName, usedTxDocName, userDocName],
+                transaction: txToken,
+              }),
+              signal: AbortSignal.timeout(5500),
+            });
+
+            if (batchGetResp.ok) {
+              const batchItems = (await batchGetResp.json()) as Array<{
+                found?: {
+                  name?: string;
+                  fields?: Record<
+                    string,
+                    { stringValue?: string; doubleValue?: number; integerValue?: string }
+                  >;
+                };
+              }>;
+
+              const txDoc = batchItems.find((b) => b.found?.name?.endsWith(`/received_sms_transactions/${txId}`))?.found;
+              const usedDoc = batchItems.find((b) => b.found?.name?.endsWith(`/usedTxIds/${txId}`))?.found;
+              const userDoc = batchItems.find((b) => b.found?.name?.endsWith(`/users/${uid}`))?.found;
+
+              if (!txDoc) {
+                await rollback();
+                // Check webhook store before returning 404
+                const srvFallback = smsTransactionStore.get(txId);
+                if (!srvFallback) {
+                  res.status(404).json({
+                    success: false,
+                    error: 'የቴሌብር ትራንዛክሽን ቁጥሩ አልተገኘም ወይም ትክክል አይደለም',
+                  });
+                  return;
+                }
+              } else {
+                const txStatus = txDoc.fields?.status?.stringValue || 'unused';
+                if (txStatus === 'used' || usedDoc) {
+                  await rollback();
+                  res.status(400).json({
+                    success: false,
+                    error: 'ይህ የትራንዛክሽን ቁጥር ከዚህ በፊት ጥቅም ላይ ውሏል',
+                  });
+                  return;
+                }
+
+                const rawAmount =
+                  txDoc.fields?.amount?.doubleValue ??
+                  Number(txDoc.fields?.amount?.integerValue ?? 0);
+                const amount = Number(Number(rawAmount).toFixed(2));
+                if (!Number.isFinite(amount) || amount < 100 || amount > 500000) {
+                  await rollback();
+                  res.status(400).json({
+                    success: false,
+                    error: 'በSMS የተመዘገበው የብር መጠን ከተፈቀደው ገደብ (100 - 500,000 ብር) ውጭ ነው',
+                  });
+                  return;
+                }
+
+                const prevBal =
+                  userDoc?.fields?.balance?.doubleValue ??
+                  Number(userDoc?.fields?.balance?.integerValue ?? 0);
+                const prevTotalDep =
+                  userDoc?.fields?.totalDeposited?.doubleValue ??
+                  Number(userDoc?.fields?.totalDeposited?.integerValue ?? 0);
+                const nowIso = new Date().toISOString();
+
+                const commitResp = await fetch(`${docsApiBase}:commit`, {
+                  method: 'POST',
+                  headers: {
+                    Authorization: `Bearer ${accessToken}`,
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify({
+                    transaction: txToken,
+                    writes: [
+                      {
+                        update: {
+                          name: txDocName,
+                          fields: {
+                            status: { stringValue: 'used' },
+                            used_by: { stringValue: uid },
+                            used_at: { timestampValue: nowIso },
+                          },
+                        },
+                        updateMask: { fieldPaths: ['status', 'used_by', 'used_at'] },
+                      },
+                      {
+                        update: {
+                          name: usedTxDocName,
+                          fields: {
+                            txId: { stringValue: txId },
+                            uid: { stringValue: uid },
+                            amount: { doubleValue: amount },
+                            createdAt: { timestampValue: nowIso },
+                          },
+                        },
+                      },
+                      {
+                        update: {
+                          name: userDocName,
+                          fields: {
+                            balance: { doubleValue: Number((prevBal + amount).toFixed(2)) },
+                            totalDeposited: { doubleValue: Number((prevTotalDep + amount).toFixed(2)) },
+                            hasDeposited: { booleanValue: true },
+                            lastActionType: { stringValue: 'deposit' },
+                            lastActionRef: { stringValue: txId },
+                            updatedAt: { timestampValue: nowIso },
+                          },
+                        },
+                        updateMask: {
+                          fieldPaths: [
+                            'balance',
+                            'totalDeposited',
+                            'hasDeposited',
+                            'lastActionType',
+                            'lastActionRef',
+                            'updatedAt',
+                          ],
+                        },
+                      },
+                    ],
+                  }),
+                  signal: AbortSignal.timeout(5500),
+                });
+
+                if (commitResp.ok) {
+                  res.status(200).json({
+                    success: true,
+                    serverCredited: true,
+                    transactionId: txId,
+                    newAmount: amount,
+                    message: `በተሳካ ሁኔታ ${amount} ብር ወደ ዋሌትዎ ገብቷል!`,
+                  });
+                  return;
+                }
+                await rollback();
+              }
+            } else {
+              await rollback();
+            }
+          }
+        }
+      }
+
+      // 2) Fallback: check Express SMS Webhook cache when Firebase Admin REST credentials are not configured
+      const record = smsTransactionStore.get(txId);
+      if (record) {
+        if (record.status === 'used') {
+          res.status(400).json({
+            success: false,
+            error: 'ይህ የትራንዛክሽን ቁጥር ከዚህ በፊት ጥቅም ላይ ውሏል',
+          });
+          return;
+        }
+        res.status(200).json({
+          success: true,
+          serverCredited: false,
+          transactionId: txId,
+          newAmount: record.amount,
+          message: `ትራንዛክሽን ${txId} (${record.amount} ብር) ተገኝቷል`,
+        });
+        return;
+      }
+
+      res.status(404).json({
+        success: false,
+        needsClientFirestoreCheck: true,
+        error: 'የቴሌብር ትራንዛክሽን ቁጥሩ አልተገኘም ወይም ትክክል አይደለም',
+      });
+    } catch (err) {
+      res.status(500).json({
+        success: false,
+        error: 'Internal Server Error: ' + (err instanceof Error ? err.message : 'Unknown error'),
+      });
+    }
+  });
+
+  const handleAutomatedScheduleRequest = async (req: express.Request, res: express.Response) => {
     const force = req.query.force === '1';
     if (!force && scheduleCache && scheduleCache.expiresAt > Date.now()) {
       res.json(scheduleCache.payload);
@@ -1553,12 +2132,13 @@ async function startServer() {
     }
 
     try {
-      const [direct, globalFeed] = await Promise.all([
+      const [rapid, direct, globalFeed] = await Promise.all([
+        tryRapidApiFootball7Days(),
         tryBeSoccer7DaysDirect(),
         fetch7DayLiveSoccerFeed(),
       ]);
 
-      const merged = direct.matches.length > 0 ? [...direct.matches, ...globalFeed] : globalFeed;
+      const merged = [...rapid.matches, ...direct.matches, ...globalFeed];
       const deduped: ExternalMatchDTO[] = [];
       const seen = new Set<string>();
       for (const m of merged) {
@@ -1568,11 +2148,30 @@ async function startServer() {
         deduped.push(m);
       }
 
+      const oddsEnriched = await tryTheOddsApiEnrichment(deduped);
       const uniqueDays = new Set(deduped.map((m) => m.dateKey));
+      const liveCount = deduped.filter((m) => m.isLive).length;
+      const upcomingCount = deduped.length - liveCount;
+
+      const providersActive: string[] = [];
+      if (rapid.active) providersActive.push('RapidAPI API-Football');
+      if (direct.matches.length > 0) providersActive.push('BeSoccer Live');
+      if (globalFeed.length > 0) providersActive.push('ESPN Global Feed');
+      if (oddsEnriched) providersActive.push('The Odds API');
+
+      const providerLabel =
+        providersActive.length > 0
+          ? providersActive.join(' + ')
+          : 'Live Football API Sync';
 
       const payload = {
         matches: deduped,
-        source: direct.matches.length > 0 ? 'besoccer' : 'besoccer-sync',
+        source: rapid.active ? 'rapidapi-football' : direct.matches.length > 0 ? 'besoccer' : 'espn-live',
+        providerLabel,
+        providersActive,
+        hasRapidApi: Boolean(getRapidApiAuthConfig()),
+        liveCount,
+        upcomingCount,
         besoccerNote: direct.note,
         daysCovered: uniqueDays.size,
         fetchedAt: new Date().toISOString(),
@@ -1585,9 +2184,181 @@ async function startServer() {
 
       res.json(payload);
     } catch (err) {
+      if (scheduleCache?.payload) {
+        res.json(scheduleCache.payload);
+        return;
+      }
       res.status(500).json({
-        error: err instanceof Error ? err.message : 'Failed to fetch 7-day schedule',
+        error: err instanceof Error ? err.message : 'Failed to fetch automated football schedule',
         matches: [],
+      });
+    }
+  };
+
+  app.get('/api/besoccer/schedule', handleAutomatedScheduleRequest);
+  app.get('/api/football/schedule', handleAutomatedScheduleRequest);
+
+  // Automated Real-Time Live & Full-Time Match Results Sync (RapidAPI + ESPN Live/Post Feed)
+  app.post('/api/football/results', async (req, res) => {
+    try {
+      const body = (req.body || {}) as {
+        picks?: Array<{ matchId?: string; home?: string; away?: string }>;
+      };
+      const reqPicks = Array.isArray(body.picks) ? body.picks.slice(0, 60) : [];
+      if (reqPicks.length === 0) {
+        res.json({ results: {}, fetchedAt: new Date().toISOString() });
+        return;
+      }
+
+      const results: Record<
+        string,
+        {
+          status: 'pre' | 'in' | 'post';
+          minute: number;
+          homeGoals: number;
+          awayGoals: number;
+          htHomeGoals?: number;
+          htAwayGoals?: number;
+          source: string;
+        }
+      > = {};
+
+      // 1) Query RapidAPI API-Football directly for any rapid_* fixture IDs if configured
+      const rapidCfg = getRapidApiAuthConfig();
+      const rapidIds = reqPicks
+        .map((p) => (p.matchId || '').trim())
+        .filter((id) => id.startsWith('rapid_'))
+        .map((id) => id.replace(/^rapid_/, ''))
+        .filter((num) => /^\d+$/.test(num))
+        .slice(0, 20);
+
+      if (rapidCfg && rapidIds.length > 0) {
+        try {
+          const rResp = await fetch(`${rapidCfg.baseUrl}/fixtures?ids=${rapidIds.join('-')}`, {
+            headers: rapidCfg.headers,
+            signal: AbortSignal.timeout(5500),
+          });
+          if (rResp.ok) {
+            const rJson = (await rResp.json()) as { response?: RapidApiFixtureItem[] };
+            const LIVE_SHORTS = new Set(['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE', 'INT']);
+            const POST_SHORTS = new Set(['FT', 'AET', 'PEN']);
+            for (const item of rJson.response || []) {
+              const fid = item.fixture?.id;
+              if (!fid) continue;
+              const matchId = `rapid_${fid}`;
+              const stShort = String(item.fixture?.status?.short || 'NS').toUpperCase();
+              const status: 'pre' | 'in' | 'post' = POST_SHORTS.has(stShort)
+                ? 'post'
+                : LIVE_SHORTS.has(stShort)
+                  ? 'in'
+                  : 'pre';
+              results[matchId] = {
+                status,
+                minute:
+                  status === 'post'
+                    ? 90
+                    : Math.min(90, Math.max(1, item.fixture?.status?.elapsed || 1)),
+                homeGoals: Number(item.goals?.home ?? 0),
+                awayGoals: Number(item.goals?.away ?? 0),
+                htHomeGoals:
+                  typeof item.score?.halftime?.home === 'number'
+                    ? item.score.halftime.home
+                    : undefined,
+                htAwayGoals:
+                  typeof item.score?.halftime?.away === 'number'
+                    ? item.score.halftime.away
+                    : undefined,
+                source: 'RapidAPI API-Football',
+              };
+            }
+          }
+        } catch {
+          // Continue with ESPN real-time fallback
+        }
+      }
+
+      // 2) Query ESPN live & today's/yesterday's scoreboards for live & full-time results
+      const now = new Date();
+      const yestCompact = new Date(now.getTime() - 86400_000).toISOString().slice(0, 10).replace(/-/g, '');
+      const todayCompact = now.toISOString().slice(0, 10).replace(/-/g, '');
+      const espnResultUrls = [
+        'https://site.api.espn.com/apis/site/v2/sports/soccer/all/scoreboard',
+        `https://site.api.espn.com/apis/site/v2/sports/soccer/all/scoreboard?dates=${todayCompact}`,
+        `https://site.api.espn.com/apis/site/v2/sports/soccer/all/scoreboard?dates=${yestCompact}`,
+        'https://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/scoreboard',
+        'https://site.api.espn.com/apis/site/v2/sports/soccer/esp.1/scoreboard',
+        'https://site.api.espn.com/apis/site/v2/sports/soccer/ita.1/scoreboard',
+        'https://site.api.espn.com/apis/site/v2/sports/soccer/ger.1/scoreboard',
+        'https://site.api.espn.com/apis/site/v2/sports/soccer/fra.1/scoreboard',
+        'https://site.api.espn.com/apis/site/v2/sports/soccer/uefa.champions/scoreboard',
+        'https://site.api.espn.com/apis/site/v2/sports/soccer/uefa.nations/scoreboard',
+      ];
+
+      const espnPages = await Promise.allSettled(
+        espnResultUrls.map((u) =>
+          fetch(u, { signal: AbortSignal.timeout(4500) }).then((r) => (r.ok ? r.json() : null)),
+        ),
+      );
+
+      const allEvents: EspnEvent[] = [];
+      for (const p of espnPages) {
+        if (p.status === 'fulfilled' && Array.isArray(p.value?.events)) {
+          allEvents.push(...(p.value.events as EspnEvent[]));
+        }
+      }
+
+      for (const pick of reqPicks) {
+        const mid = (pick.matchId || '').trim();
+        if (!mid || results[mid]) continue;
+        const cleanEspnId = mid.startsWith('bslive_') ? mid.replace(/^bslive_/, '') : '';
+
+        const matchedEv = allEvents.find((ev) => {
+          if (cleanEspnId && ev.id === cleanEspnId) return true;
+          const comp = ev.competitions?.[0];
+          const hc = comp?.competitors?.find((c) => c.homeAway === 'home');
+          const ac = comp?.competitors?.find((c) => c.homeAway === 'away');
+          const hn = hc?.team?.displayName || hc?.team?.shortDisplayName || '';
+          const an = ac?.team?.displayName || ac?.team?.shortDisplayName || '';
+          return Boolean(
+            pick.home && pick.away && hn && an && teamsMatch(hn, pick.home) && teamsMatch(an, pick.away),
+          );
+        });
+
+        if (!matchedEv) continue;
+        const stateRaw = matchedEv.status?.type?.state;
+        const status: 'pre' | 'in' | 'post' =
+          stateRaw === 'post' ? 'post' : stateRaw === 'in' ? 'in' : 'pre';
+        const comp = matchedEv.competitions?.[0];
+        const hc = comp?.competitors?.find((c) => c.homeAway === 'home');
+        const ac = comp?.competitors?.find((c) => c.homeAway === 'away');
+        const rawMin = parseInt(
+          String(matchedEv.status?.displayClock || '1').replace(/[^0-9]/g, ''),
+          10,
+        );
+        const minute =
+          status === 'post'
+            ? 90
+            : status === 'in'
+              ? Math.min(89, Math.max(1, Number.isFinite(rawMin) ? rawMin : 1))
+              : 0;
+
+        results[mid] = {
+          status,
+          minute,
+          homeGoals: Number(hc?.score ?? 0),
+          awayGoals: Number(ac?.score ?? 0),
+          source: 'ESPN Live Results Feed',
+        };
+      }
+
+      res.json({
+        results,
+        fetchedAt: new Date().toISOString(),
+      });
+    } catch (err) {
+      res.status(500).json({
+        error: err instanceof Error ? err.message : 'Failed to sync match results',
+        results: {},
       });
     }
   });

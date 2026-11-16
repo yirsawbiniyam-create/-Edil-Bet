@@ -654,7 +654,50 @@ export interface BeSoccerScheduleResult {
   syncedCount: number;
   daysCovered: number;
   source: string;
+  providerLabel?: string;
+  providersActive?: string[];
+  hasRapidApi?: boolean;
+  liveCount?: number;
+  upcomingCount?: number;
+  fromCache?: boolean;
   fetchedAt: string;
+}
+
+export interface LiveMatchResultDTO {
+  status: 'pre' | 'in' | 'post';
+  minute: number;
+  homeGoals: number;
+  awayGoals: number;
+  htHomeGoals?: number;
+  htAwayGoals?: number;
+  source: string;
+}
+
+const ONLINE_SCHEDULE_STORAGE_KEY = 'edilbet_online_schedule_cache_v1';
+
+function readCachedOnlineSchedule(): BeSoccerScheduleResult | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(ONLINE_SCHEDULE_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as BeSoccerScheduleResult;
+    if (!Array.isArray(parsed?.matches) || parsed.matches.length === 0) return null;
+    return { ...parsed, fromCache: true };
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedOnlineSchedule(payload: BeSoccerScheduleResult): void {
+  if (typeof window === 'undefined' || payload.matches.length === 0) return;
+  try {
+    window.localStorage.setItem(
+      ONLINE_SCHEDULE_STORAGE_KEY,
+      JSON.stringify({ ...payload, fromCache: false }),
+    );
+  } catch {
+    // Ignore storage quota errors
+  }
 }
 
 function assignFallbackDateKeys(matches: ScheduledMatch[], now = new Date()): ScheduledMatch[] {
@@ -691,81 +734,151 @@ function assignFallbackDateKeys(matches: ScheduledMatch[], now = new Date()): Sc
   });
 }
 
+async function fetchSchedulePayloadWithRetry(forceRefresh: boolean) {
+  const suffix = forceRefresh ? '?force=1' : '';
+  const endpoints = [
+    `/api/football/schedule${suffix}`,
+    `/api/football/schedule${suffix}`,
+    `/api/besoccer/schedule${suffix}`,
+  ];
+
+  let lastErr: Error | null = null;
+  for (let i = 0; i < endpoints.length; i++) {
+    try {
+      const resp = await fetch(endpoints[i]);
+      if (!resp.ok) {
+        throw new Error(`HTTP ${resp.status}`);
+      }
+      const data = (await resp.json()) as {
+        matches?: ExternalMatchPayload[];
+        daysCovered?: number;
+        source?: string;
+        providerLabel?: string;
+        providersActive?: string[];
+        hasRapidApi?: boolean;
+        liveCount?: number;
+        upcomingCount?: number;
+        fetchedAt?: string;
+      };
+      if (Array.isArray(data.matches) && data.matches.length > 0) {
+        return data;
+      }
+      lastErr = new Error('Empty remote match list');
+    } catch (err) {
+      lastErr = err instanceof Error ? err : new Error('Schedule fetch failed');
+    }
+    if (i < endpoints.length - 1) {
+      await new Promise((r) => setTimeout(r, 400));
+    }
+  }
+  throw lastErr || new Error('Could not reach football schedule API');
+}
+
 export async function fetchBeSoccerSchedule(forceRefresh = false): Promise<BeSoccerScheduleResult> {
   const now = new Date();
   const localSchedule = assignFallbackDateKeys(buildFootballSchedule(now), now);
-  const url = forceRefresh ? '/api/besoccer/schedule?force=1' : '/api/besoccer/schedule';
-  const resp = await fetch(url);
-  if (!resp.ok) {
-    throw new Error(`HTTP ${resp.status}`);
-  }
-  const data = (await resp.json()) as {
-    matches?: ExternalMatchPayload[];
-    daysCovered?: number;
-    source?: string;
-    fetchedAt?: string;
-  };
 
-  const remoteList = Array.isArray(data.matches) ? data.matches : [];
-  if (remoteList.length === 0) {
-    return {
-      matches: localSchedule,
-      syncedCount: 0,
-      daysCovered: 7,
-      source: 'local',
-      fetchedAt: new Date().toISOString(),
+  try {
+    const data = await fetchSchedulePayloadWithRetry(forceRefresh);
+    const remoteList = Array.isArray(data.matches) ? data.matches : [];
+    if (remoteList.length === 0) {
+      const cached = readCachedOnlineSchedule();
+      if (cached) return cached;
+      return {
+        matches: localSchedule,
+        syncedCount: 0,
+        daysCovered: 7,
+        source: 'local',
+        providerLabel: 'Local Schedule Fallback',
+        fetchedAt: new Date().toISOString(),
+      };
+    }
+
+    const converted: ScheduledMatch[] = remoteList.map((m) => ({
+      id: m.id,
+      league: m.league,
+      leagueLabel: m.leagueLabel,
+      tier: m.tier,
+      tierLabel: m.tierLabel,
+      timeframe: m.timeframe,
+      dateKey: m.dateKey || (m.kickoffIso ? m.kickoffIso.slice(0, 10) : getNext7DaysEAT(now)[0].dateKey),
+      kickoffIso: m.kickoffIso,
+      kickoffLabel: m.kickoffLabel,
+      scheduleGroupLabel: m.scheduleGroupLabel,
+      isLive: m.isLive,
+      liveMinute: m.liveMinute,
+      liveHomeGoals: m.liveHomeGoals,
+      liveAwayGoals: m.liveAwayGoals,
+      home: m.home,
+      away: m.away,
+      homeCode: m.homeCode,
+      awayCode: m.awayCode,
+      homeLogo: m.homeLogo,
+      awayLogo: m.awayLogo,
+      besoccerUrl: m.besoccerUrl,
+      sourceName: m.sourceName,
+      featured: m.featured,
+      odds: makeOdds(
+        m.homeOdd,
+        m.drawOdd,
+        m.awayOdd,
+        m.over25Odd,
+        m.under25Odd,
+        m.ggOdd,
+        m.ngOdd,
+      ),
+    }));
+
+    converted.sort((a, b) => {
+      if (a.isLive !== b.isLive) return a.isLive ? -1 : 1;
+      const tA = a.kickoffIso ? new Date(a.kickoffIso).getTime() : Number.MAX_SAFE_INTEGER;
+      const tB = b.kickoffIso ? new Date(b.kickoffIso).getTime() : Number.MAX_SAFE_INTEGER;
+      if (tA !== tB) return tA - tB;
+      return a.tier - b.tier;
+    });
+
+    const result: BeSoccerScheduleResult = {
+      matches: converted,
+      syncedCount: converted.length,
+      daysCovered: data.daysCovered ?? 7,
+      source: data.source || 'automated-api',
+      providerLabel: data.providerLabel || 'BeSoccer Live + ESPN Global Feed',
+      providersActive: data.providersActive || [],
+      hasRapidApi: Boolean(data.hasRapidApi),
+      liveCount: data.liveCount ?? converted.filter((m) => m.isLive).length,
+      upcomingCount: data.upcomingCount ?? converted.filter((m) => !m.isLive).length,
+      fromCache: false,
+      fetchedAt: data.fetchedAt || new Date().toISOString(),
     };
+    writeCachedOnlineSchedule(result);
+    return result;
+  } catch (err) {
+    const cached = readCachedOnlineSchedule();
+    if (cached) {
+      return cached;
+    }
+    throw err;
   }
-
-  const converted: ScheduledMatch[] = remoteList.map((m) => ({
-    id: m.id,
-    league: m.league,
-    leagueLabel: m.leagueLabel,
-    tier: m.tier,
-    tierLabel: m.tierLabel,
-    timeframe: m.timeframe,
-    dateKey: m.dateKey || (m.kickoffIso ? m.kickoffIso.slice(0, 10) : getNext7DaysEAT(now)[0].dateKey),
-    kickoffIso: m.kickoffIso,
-    kickoffLabel: m.kickoffLabel,
-    scheduleGroupLabel: m.scheduleGroupLabel,
-    isLive: m.isLive,
-    liveMinute: m.liveMinute,
-    liveHomeGoals: m.liveHomeGoals,
-    liveAwayGoals: m.liveAwayGoals,
-    home: m.home,
-    away: m.away,
-    homeCode: m.homeCode,
-    awayCode: m.awayCode,
-    homeLogo: m.homeLogo,
-    awayLogo: m.awayLogo,
-    besoccerUrl: m.besoccerUrl,
-    sourceName: m.sourceName,
-    featured: m.featured,
-    odds: makeOdds(
-      m.homeOdd,
-      m.drawOdd,
-      m.awayOdd,
-      m.over25Odd,
-      m.under25Odd,
-      m.ggOdd,
-      m.ngOdd,
-    ),
-  }));
-
-  const ethiopiaMatches = localSchedule.filter((m) => m.league === 'ethiopia');
-  const presentTimeframes = new Set(converted.map((m) => m.timeframe));
-  const extraLocal = localSchedule.filter(
-    (m) => m.league !== 'ethiopia' && !presentTimeframes.has(m.timeframe),
-  );
-
-  const merged = [...converted, ...ethiopiaMatches, ...extraLocal];
-
-  return {
-    matches: merged,
-    syncedCount: converted.length,
-    daysCovered: data.daysCovered ?? 7,
-    source: data.source || 'besoccer-sync',
-    fetchedAt: data.fetchedAt || new Date().toISOString(),
-  };
 }
+
+export async function fetchAutomatedMatchResults(
+  picks: Array<{ matchId: string; home: string; away: string }>,
+): Promise<Record<string, LiveMatchResultDTO>> {
+  if (!Array.isArray(picks) || picks.length === 0) return {};
+  try {
+    const resp = await fetch('/api/football/results', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ picks: picks.slice(0, 60) }),
+    });
+    if (!resp.ok) return {};
+    const json = (await resp.json()) as {
+      results?: Record<string, LiveMatchResultDTO>;
+    };
+    return json.results && typeof json.results === 'object' ? json.results : {};
+  } catch {
+    return {};
+  }
+}
+
 
