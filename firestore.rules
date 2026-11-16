@@ -217,6 +217,19 @@ service cloud.firestore {
         && data.createdAt == request.time;
     }
 
+    function isValidReceivedSmsTransaction(data, txId) {
+      return data.keys().hasAll(['transaction_id', 'amount', 'message', 'status', 'created_at'])
+        && data.keys().hasOnly(['transaction_id', 'amount', 'message', 'status', 'source', 'created_at', 'used_by', 'used_at'])
+        && isValidTxId(data.transaction_id) && data.transaction_id == txId
+        && data.amount is number && data.amount >= 100 && data.amount <= 500000
+        && data.message is string && data.message.size() >= 2 && data.message.size() <= 600
+        && data.status in ['unused', 'used']
+        && (!('source' in data) || (data.source is string && data.source.size() <= 40))
+        && data.created_at is timestamp
+        && (!('used_by' in data) || isValidId(data.used_by))
+        && (!('used_at' in data) || data.used_at is timestamp);
+    }
+
     function isValidDeposit(data, depositId) {
       return data.keys().hasAll(['id', 'uid', 'playerName', 'playerPhone', 'systemPhone', 'txId', 'amount', 'status', 'verifiedMessage', 'createdAt'])
         && data.keys().hasOnly(['id', 'uid', 'playerName', 'playerPhone', 'systemPhone', 'txId', 'amount', 'status', 'verifiedMessage', 'createdAt'])
@@ -586,8 +599,10 @@ service cloud.firestore {
             && existsAfter(/databases/$(database)/documents/deposits/$(incoming().lastActionRef))
             && getAfter(/databases/$(database)/documents/deposits/$(incoming().lastActionRef)).data.uid == userId
             && getAfter(/databases/$(database)/documents/deposits/$(incoming().lastActionRef)).data.amount >= 100
-            && incoming().balance == existing().balance + getAfter(/databases/$(database)/documents/deposits/$(incoming().lastActionRef)).data.amount
-            && incoming().totalDeposited == existing().totalDeposited + getAfter(/databases/$(database)/documents/deposits/$(incoming().lastActionRef)).data.amount
+            && incoming().balance >= existing().balance + getAfter(/databases/$(database)/documents/deposits/$(incoming().lastActionRef)).data.amount - 0.01
+            && incoming().balance <= existing().balance + getAfter(/databases/$(database)/documents/deposits/$(incoming().lastActionRef)).data.amount + 0.01
+            && incoming().totalDeposited >= existing().totalDeposited + getAfter(/databases/$(database)/documents/deposits/$(incoming().lastActionRef)).data.amount - 0.01
+            && incoming().totalDeposited <= existing().totalDeposited + getAfter(/databases/$(database)/documents/deposits/$(incoming().lastActionRef)).data.amount + 0.01
             && incoming().totalWithdrawn == existing().totalWithdrawn
             && incoming().hasDeposited == true
           ) ||
@@ -719,13 +734,50 @@ service cloud.firestore {
 
     // 4. Anti-Replay Used Transaction IDs
     match /usedTxIds/{txId} {
-      allow get: if isValidTxId(txId) && (isAdmin() || (resource != null && isOwner(resource.data.uid)));
+      allow get: if isValidTxId(txId) && (isAdmin() || resource == null || isOwner(resource.data.uid));
       allow list: if false;
       allow create: if isValidTxId(txId)
         && isVerifiedUser()
         && isValidUsedTxId(incoming(), txId)
         && existsAfter(/databases/$(database)/documents/deposits/$(txId));
       allow update, delete: if false;
+    }
+
+    // 4b. Telebirr SMS Gateway Records (MacroDroid Webhook -> Real-time Wallet Auto-Verify)
+    match /received_sms_transactions/{txId} {
+      allow get: if isValidTxId(txId) && isSignedIn();
+      allow list: if isAdmin();
+      allow create: if isValidTxId(txId)
+        && isAdmin()
+        && isValidReceivedSmsTransaction(incoming(), txId)
+        && incoming().status == 'unused'
+        && !('used_by' in incoming())
+        && !('used_at' in incoming())
+        && incoming().created_at == request.time;
+      allow update: if isValidTxId(txId)
+        && isValidReceivedSmsTransaction(incoming(), txId)
+        && (
+          isAdmin() ||
+          (
+            isVerifiedUser()
+            && existing().status == 'unused'
+            && incoming().status == 'used'
+            && incoming().transaction_id == existing().transaction_id
+            && incoming().amount == existing().amount
+            && incoming().message == existing().message
+            && incoming().created_at == existing().created_at
+            && incoming().used_by == request.auth.uid
+            && incoming().used_at == request.time
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'used_by', 'used_at'])
+            && existsAfter(/databases/$(database)/documents/deposits/$(txId))
+            && getAfter(/databases/$(database)/documents/deposits/$(txId)).data.uid == request.auth.uid
+            && getAfter(/databases/$(database)/documents/deposits/$(txId)).data.amount == existing().amount
+            && existsAfter(/databases/$(database)/documents/users/$(request.auth.uid))
+            && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.lastActionType == 'deposit'
+            && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.lastActionRef == txId
+          )
+        );
+      allow delete: if false;
     }
 
     // 5. Telebirr Deposits

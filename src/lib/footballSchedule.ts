@@ -23,6 +23,7 @@ export interface ScheduledMatch {
   tierLabel: string;
   timeframe: Exclude<TimeframeBucket, 'all'>;
   dateKey?: string;
+  kickoffIso?: string;
   kickoffLabel: string;
   scheduleGroupLabel: string;
   isLive: boolean;
@@ -659,15 +660,34 @@ export interface BeSoccerScheduleResult {
 function assignFallbackDateKeys(matches: ScheduledMatch[], now = new Date()): ScheduledMatch[] {
   const days = getNext7DaysEAT(now);
   return matches.map((m, idx) => {
-    if (m.dateKey) return m;
-    if (m.timeframe === 'live' || m.timeframe === 'hourly' || m.timeframe === 'daily') {
-      return { ...m, dateKey: days[0].dateKey };
+    const fallbackDateKey =
+      m.dateKey ||
+      (m.timeframe === 'live' || m.timeframe === 'hourly' || m.timeframe === 'daily'
+        ? days[0].dateKey
+        : m.timeframe === 'weekly'
+          ? days[1 + (idx % 6)].dateKey
+          : days[6].dateKey);
+
+    let fallbackKickoffIso = m.kickoffIso;
+    if (!fallbackKickoffIso) {
+      if (m.isLive) {
+        fallbackKickoffIso = new Date(now.getTime() - (m.liveMinute ?? 30) * 60_000).toISOString();
+      } else if (m.timeframe === 'hourly') {
+        const hoursAhead = idx % 2 === 0 ? 0.2 : 1 + (idx % 4);
+        fallbackKickoffIso = new Date(now.getTime() + hoursAhead * 3600_000).toISOString();
+      } else if (m.timeframe === 'daily') {
+        fallbackKickoffIso = new Date(now.getTime() + (6 + (idx % 6)) * 3600_000).toISOString();
+      } else {
+        const dayOffset = m.timeframe === 'weekly' ? 1 + (idx % 6) : 10 + (idx % 12);
+        fallbackKickoffIso = new Date(now.getTime() + dayOffset * 86400_000).toISOString();
+      }
     }
-    if (m.timeframe === 'weekly') {
-      const slot = 1 + (idx % 6);
-      return { ...m, dateKey: days[slot].dateKey };
-    }
-    return { ...m, dateKey: days[6].dateKey };
+
+    return {
+      ...m,
+      dateKey: fallbackDateKey,
+      kickoffIso: fallbackKickoffIso,
+    };
   });
 }
 
@@ -705,6 +725,7 @@ export async function fetchBeSoccerSchedule(forceRefresh = false): Promise<BeSoc
     tierLabel: m.tierLabel,
     timeframe: m.timeframe,
     dateKey: m.dateKey || (m.kickoffIso ? m.kickoffIso.slice(0, 10) : getNext7DaysEAT(now)[0].dateKey),
+    kickoffIso: m.kickoffIso,
     kickoffLabel: m.kickoffLabel,
     scheduleGroupLabel: m.scheduleGroupLabel,
     isLive: m.isLive,

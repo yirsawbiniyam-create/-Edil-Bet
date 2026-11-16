@@ -827,6 +827,50 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["ownerUid", "bootstrapClaimed", "passwordVersion", "passwordUpdatedAt", "updatedAt"]
+    },
+    "ReceivedSmsTransaction": {
+      "title": "ReceivedSmsTransaction",
+      "description": "Incoming Telebirr SMS payment notifications forwarded by MacroDroid webhook for automatic deposit verification.",
+      "type": "object",
+      "properties": {
+        "transaction_id": {
+          "type": "string",
+          "pattern": "^[A-Z0-9]{6,24}$",
+          "minLength": 6,
+          "maxLength": 24
+        },
+        "amount": {
+          "type": "number",
+          "description": "Parsed Telebirr deposit amount in ETB."
+        },
+        "message": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 600
+        },
+        "status": {
+          "type": "string",
+          "enum": ["unused", "used"]
+        },
+        "source": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "used_by": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "used_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["transaction_id", "amount", "message", "status", "created_at"]
     }
   },
   "firestore": {
@@ -905,6 +949,10 @@
     "/weeklyLeaderboard/{entryId}": {
       "schema": { "$ref": "#/entities/WeeklyLeaderboard" },
       "description": "Weekly total winnings leaderboard entries incremented atomically when bets or football tickets pay out."
+    },
+    "/received_sms_transactions/{txId}": {
+      "schema": { "$ref": "#/entities/ReceivedSmsTransaction" },
+      "description": "Incoming Telebirr SMS gateway records consumed atomically during WalletPanel deposit verification."
     }
   }
 }

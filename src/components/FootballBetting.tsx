@@ -3,6 +3,9 @@ import {
   ArrowLeft,
   Banknote,
   BarChart3,
+  Bell,
+  BellOff,
+  BellRing,
   BookOpen,
   CalendarClock,
   CheckCircle2,
@@ -59,6 +62,19 @@ import {
   settleOrCashoutFootballTicket,
   syncLiveFootballTicketProgress,
 } from '../lib/firestoreService';
+import {
+  dispatchBrowserMatchNotification,
+  getBrowserNotificationPermission,
+  getMinutesUntilKickoff,
+  loadNotifiedMatchMap,
+  loadPushEnabledFlag,
+  loadRemindMatchIds,
+  PreMatchAlertItem,
+  requestBrowserNotificationPermission,
+  saveNotifiedMatchMap,
+  savePushEnabledFlag,
+  saveRemindMatchIds,
+} from '../lib/matchNotifications';
 import { useLanguage } from '../lib/i18n';
 import { playGameSound } from '../lib/sound';
 import { FootballMostBet } from './FootballMostBet';
@@ -204,6 +220,19 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
   const [marketsMatchId, setMarketsMatchId] = useState<string | null>(null);
   const [statsMatchId, setStatsMatchId] = useState<string | null>(null);
 
+  // 15-Minute Pre-Match Push Notifications & "Remind me" local state flags
+  const [pushEnabled, setPushEnabled] = useState<boolean>(() => loadPushEnabledFlag());
+  const [remindMatchIds, setRemindMatchIds] = useState<string[]>(() => loadRemindMatchIds());
+  const [notifiedMap, setNotifiedMap] = useState<Record<string, number>>(() =>
+    loadNotifiedMatchMap(),
+  );
+  const [browserPerm, setBrowserPerm] = useState<NotificationPermission | 'unsupported'>(() =>
+    getBrowserNotificationPermission(),
+  );
+  const [activePreMatchAlerts, setActivePreMatchAlerts] = useState<PreMatchAlertItem[]>([]);
+  const notifiedMapRef = useRef(notifiedMap);
+  notifiedMapRef.current = notifiedMap;
+
   const [liveSimMap, setLiveSimMap] = useState<Record<string, LiveSimSnapshot>>({});
   const settlingRef = useRef<Set<string>>(new Set());
   const liveSimRef = useRef<Record<string, LiveSimSnapshot>>({});
@@ -327,12 +356,19 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
     return () => window.clearInterval(refreshTimer);
   }, []);
 
-  // Real-time board clock for LIVE matches (locks in-play betting at 86'+)
+  // Real-time board clock ONLY for local demo LIVE matches (real BeSoccer/ESPN matches keep authentic synced scores)
   useEffect(() => {
     const boardTimer = window.setInterval(() => {
       setScheduleMatches((prev) =>
         prev.map((m) => {
           if (!m.isLive) return m;
+          if (
+            m.id.startsWith('bslive_') ||
+            m.id.startsWith('bsweb_') ||
+            m.id.startsWith('bs_')
+          ) {
+            return m;
+          }
           const curMin = m.liveMinute ?? 1;
           const nextMin = curMin >= 90 ? 12 : curMin + 1;
           let hg = m.liveHomeGoals ?? 0;
@@ -597,6 +633,161 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
       }).length,
     [scheduleMatches, userBetsByMatch],
   );
+
+  const remindMatchSet = useMemo(() => new Set(remindMatchIds), [remindMatchIds]);
+
+  const firePreMatchAlert = (
+    match: ScheduledMatch,
+    minsLeft: number,
+    reason: PreMatchAlertItem['reason'],
+  ) => {
+    const alertId = `${match.id}_${reason}_${Date.now()}`;
+    const item: PreMatchAlertItem = {
+      id: alertId,
+      matchId: match.id,
+      home: match.home,
+      away: match.away,
+      leagueLabel: match.leagueLabel,
+      minutesRemaining: minsLeft,
+      reason,
+      triggeredAt: Date.now(),
+    };
+
+    setActivePreMatchAlerts((prev) => [item, ...prev.filter((a) => a.matchId !== match.id)].slice(0, 4));
+    playGameSound('win', soundEnabled);
+
+    const title = bi(
+      `⏰ ጨዋታ ሊጀምር ${minsLeft} ደቂቃ ቀረው!`,
+      `⏰ Kickoff in ${minsLeft} min!`,
+    );
+    const body = `${match.home} vs ${match.away} (${match.leagueLabel})`;
+
+    dispatchBrowserMatchNotification({
+      title,
+      body,
+      tag: `edilbet_prematch_${match.id}`,
+    });
+
+    onNotify(`${title} — ${body}`, 'info');
+  };
+
+  const handleTogglePushEnabled = async () => {
+    const next = !pushEnabled;
+    setPushEnabled(next);
+    savePushEnabledFlag(next);
+    if (next && browserPerm === 'default') {
+      const perm = await requestBrowserNotificationPermission();
+      setBrowserPerm(perm);
+    }
+    onNotify(
+      next
+        ? bi('የ15 ደቂቃ ቀደምት ማሳወቂያ በርቷል።', '15-minute pre-match alerts enabled.')
+        : bi('የ15 ደቂቃ ቀደምት ማሳወቂያ ጠፍቷል።', '15-minute pre-match alerts paused.'),
+      'info',
+    );
+  };
+
+  const handleEnableBrowserPush = async () => {
+    const perm = await requestBrowserNotificationPermission();
+    setBrowserPerm(perm);
+    if (perm === 'granted') {
+      onNotify(
+        bi('የብራውዘር ፑሽ ማሳወቂያ ተፈቅዷል!', 'Browser Push Notifications enabled!'),
+        'success',
+      );
+    } else {
+      onNotify(
+        bi(
+          'የብራውዘር ማሳወቂያ አልተፈቀደም — የውስጥ ማንቂያ (Toast Banner) በራስ-ሰር ይሰራል።',
+          'Browser push blocked — in-app alert banner & toast will notify you automatically.',
+        ),
+        'info',
+      );
+    }
+  };
+
+  const toggleRemindMatch = async (match: ScheduledMatch) => {
+    playGameSound('click', soundEnabled);
+    const alreadySet = remindMatchSet.has(match.id);
+    const nextIds = alreadySet
+      ? remindMatchIds.filter((id) => id !== match.id)
+      : [...remindMatchIds, match.id];
+
+    setRemindMatchIds(nextIds);
+    saveRemindMatchIds(nextIds);
+
+    if (!alreadySet) {
+      if (!pushEnabled) {
+        setPushEnabled(true);
+        savePushEnabledFlag(true);
+      }
+      if (browserPerm === 'default') {
+        const perm = await requestBrowserNotificationPermission();
+        setBrowserPerm(perm);
+      }
+      const minsLeft = getMinutesUntilKickoff(match);
+      if (minsLeft !== null && minsLeft <= 15) {
+        const dedupeKey = `${match.id}_${match.kickoffIso || match.dateKey || 'soon'}`;
+        const updated = { ...notifiedMapRef.current, [dedupeKey]: Date.now() };
+        setNotifiedMap(updated);
+        saveNotifiedMatchMap(updated);
+        firePreMatchAlert(match, minsLeft, 'remind_me');
+        return;
+      }
+      onNotify(
+        bi(
+          `${match.home} vs ${match.away} ከመጀመሩ 15 ደቂቃ በፊት እናሳውቅዎታለን!`,
+          `Remind me set: We'll notify you 15m before ${match.home} vs ${match.away}.`,
+        ),
+        'success',
+      );
+    } else {
+      onNotify(
+        bi(
+          `ለ ${match.home} vs ${match.away} ማስታወሻ ተነስቷል።`,
+          `Reminder removed for ${match.home} vs ${match.away}.`,
+        ),
+        'info',
+      );
+    }
+  };
+
+  // Monitor every 15s for upcoming matches starting in <= 15 minutes (betted OR Remind me toggled)
+  useEffect(() => {
+    if (!pushEnabled) return;
+
+    const scanPreMatchWindows = () => {
+      const nowMs = Date.now();
+      let mapChanged = false;
+      const nextMap = { ...notifiedMapRef.current };
+
+      for (const m of scheduleMatches) {
+        if (m.isLive) continue;
+        const minsLeft = getMinutesUntilKickoff(m, nowMs);
+        if (minsLeft === null || minsLeft > 15 || minsLeft < 1) continue;
+
+        const hasBet = Boolean(getUserBetInfo(m));
+        const hasRemind = remindMatchSet.has(m.id);
+        if (!hasBet && !hasRemind) continue;
+
+        const dedupeKey = `${m.id}_${m.kickoffIso || m.dateKey || 'soon'}`;
+        if (nextMap[dedupeKey]) continue;
+
+        nextMap[dedupeKey] = nowMs;
+        mapChanged = true;
+        firePreMatchAlert(m, minsLeft, hasBet ? 'bet_placed' : 'remind_me');
+      }
+
+      if (mapChanged) {
+        setNotifiedMap(nextMap);
+        saveNotifiedMatchMap(nextMap);
+      }
+    };
+
+    scanPreMatchWindows();
+    const id = window.setInterval(scanPreMatchWindows, 15_000);
+    return () => window.clearInterval(id);
+  }, [pushEnabled, scheduleMatches, remindMatchSet, userBetsByMatch]);
 
   const normalizedSearch = searchQuery.trim().toLowerCase();
 
@@ -1057,6 +1248,26 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
             </div>
 
             <div className="flex items-center gap-1.5 shrink-0">
+              {!match.isLive && !isLiveMode && (
+                <button
+                  type="button"
+                  onClick={() => void toggleRemindMatch(match)}
+                  title={bi('ከ15 ደቂቃ በፊት አስታውሰኝ', 'Remind me 15m before kickoff')}
+                  aria-pressed={remindMatchSet.has(match.id)}
+                  className={`min-h-[36px] px-2 rounded border text-[10px] font-extrabold flex items-center gap-1 cursor-pointer transition ${
+                    remindMatchSet.has(match.id)
+                      ? 'bg-amber-50 border-amber-400 text-amber-800'
+                      : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-600'
+                  }`}
+                >
+                  {remindMatchSet.has(match.id) ? (
+                    <BellRing className="w-3.5 h-3.5 text-amber-600" />
+                  ) : (
+                    <Bell className="w-3.5 h-3.5" />
+                  )}
+                  <span>{remindMatchSet.has(match.id) ? bi('ነቅቷል', 'Set') : bi('አስታውሰኝ', 'Remind')}</span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => {
@@ -1064,7 +1275,7 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
                   setStatsMatchId(match.id);
                 }}
                 title={bi('ስታትስ (H2H · Form · Table)', 'Match Statistics')}
-                className="min-h-[34px] px-2 rounded bg-slate-100 hover:bg-[#EAF3ED] border border-slate-200 text-[#0E8A38] text-[10px] font-black flex items-center gap-1 cursor-pointer"
+                className="min-h-[36px] px-2 rounded bg-slate-100 hover:bg-[#EAF3ED] border border-slate-200 text-[#0E8A38] text-[10px] font-black flex items-center gap-1 cursor-pointer"
               >
                 <BarChart3 className="w-3.5 h-3.5" />
                 <span>Stats</span>
@@ -1077,7 +1288,7 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
                   setMarketsMatchId(match.id);
                 }}
                 title={bi('135+ ገበያዎችን ክፈት', 'Open 135+ Markets')}
-                className="min-h-[34px] px-2 rounded bg-slate-100 hover:bg-[#9AD84B]/40 border border-slate-200 text-[10px] font-mono-num font-black text-[#0E8A38] flex items-center justify-center cursor-pointer disabled:opacity-45"
+                className="min-h-[36px] px-2 rounded bg-slate-100 hover:bg-[#9AD84B]/40 border border-slate-200 text-[10px] font-mono-num font-black text-[#0E8A38] flex items-center justify-center cursor-pointer disabled:opacity-45"
               >
                 +135
               </button>
@@ -1147,7 +1358,7 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
         </div>
 
         {/* DESKTOP / TABLET HORIZONTAL ROW (>=640px) */}
-        <div className="hidden sm:grid sm:grid-cols-[64px_1fr_repeat(3,64px)_84px] items-center gap-1 px-3 py-2">
+        <div className="hidden sm:grid sm:grid-cols-[64px_1fr_repeat(3,64px)_118px] items-center gap-1 px-3 py-2">
           <div className="font-mono-num text-[11px] leading-tight pr-1">
             {isLiveMode || match.isLive ? (
               <div className="text-[#0E8A38] font-extrabold">
@@ -1238,6 +1449,29 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
           })}
 
           <div className="flex items-center gap-1">
+            {!match.isLive && !isLiveMode && (
+              <button
+                type="button"
+                onClick={() => void toggleRemindMatch(match)}
+                title={
+                  remindMatchSet.has(match.id)
+                    ? bi('ማስታወሻ አንሳ', 'Remove reminder')
+                    : bi('ከ15 ደቂቃ በፊት አስታውሰኝ', 'Remind me 15m before kickoff')
+                }
+                aria-pressed={remindMatchSet.has(match.id)}
+                className={`h-10 w-8 rounded border flex items-center justify-center cursor-pointer transition shrink-0 ${
+                  remindMatchSet.has(match.id)
+                    ? 'bg-amber-50 border-amber-400 text-amber-700'
+                    : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-600'
+                }`}
+              >
+                {remindMatchSet.has(match.id) ? (
+                  <BellRing className="w-4 h-4 text-amber-600" />
+                ) : (
+                  <Bell className="w-4 h-4" />
+                )}
+              </button>
+            )}
             <button
               type="button"
               onClick={() => {
@@ -1245,7 +1479,7 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
                 setStatsMatchId(match.id);
               }}
               title={bi('ስታትስ (H2H · Form · Standings)', 'Match Statistics')}
-              className="h-10 w-9 rounded bg-slate-100 hover:bg-[#EAF3ED] border border-slate-200 text-[#0E8A38] flex items-center justify-center cursor-pointer transition"
+              className="h-10 w-8 rounded bg-slate-100 hover:bg-[#EAF3ED] border border-slate-200 text-[#0E8A38] flex items-center justify-center cursor-pointer transition shrink-0"
             >
               <BarChart3 className="w-4 h-4" />
             </button>
@@ -1739,6 +1973,102 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
         </div>
       </div>
 
+      {/* 15-Minute Pre-Match Push Notifications & Remind Me Controls Bar */}
+      <div className="bg-white border border-slate-200 rounded-xl px-3 py-2.5 sm:px-4 flex flex-wrap items-center justify-between gap-2 shadow-2xs text-xs">
+        <div className="flex items-center gap-2 min-w-0">
+          {pushEnabled ? (
+            <BellRing className="w-4 h-4 text-[#0E8A38] shrink-0" />
+          ) : (
+            <BellOff className="w-4 h-4 text-slate-400 shrink-0" />
+          )}
+          <span className="font-bold text-slate-800 truncate">
+            {bi(
+              `ከጨዋታ መጀመር 15 ደቂቃ በፊት ማንቂያ (${remindMatchIds.length} Remind Me · ${upcomingBettedCount} ውርርድ)`,
+              `15m Pre-Match Alerts (${remindMatchIds.length} Remind Me · ${upcomingBettedCount} Betted)`,
+            )}
+          </span>
+        </div>
+
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <button
+            type="button"
+            onClick={() => void handleTogglePushEnabled()}
+            className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-extrabold cursor-pointer transition ${
+              pushEnabled
+                ? 'bg-[#EAF3ED] border-[#0E8A38]/40 text-[#0E8A38]'
+                : 'bg-slate-100 border-slate-200 text-slate-600'
+            }`}
+          >
+            {pushEnabled ? bi('ማንቂያ: በርቷል', 'Alerts: ON') : bi('ማንቂያ: ጠፍቷል', 'Alerts: OFF')}
+          </button>
+
+          {browserPerm !== 'granted' && browserPerm !== 'unsupported' && (
+            <button
+              type="button"
+              onClick={() => void handleEnableBrowserPush()}
+              className="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-[11px] font-bold cursor-pointer transition"
+            >
+              {bi('የስልክ Push ፍቀድ', 'Enable Browser Push')}
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={() => {
+              const target =
+                scheduleMatches.find((m) => !m.isLive && (remindMatchSet.has(m.id) || getUserBetInfo(m))) ||
+                scheduleMatches.find((m) => !m.isLive);
+              if (target) {
+                firePreMatchAlert(target, 15, 'preview');
+              }
+            }}
+            className="px-2.5 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 text-[11px] font-bold cursor-pointer transition"
+          >
+            {bi('ማንቂያ ሞክር', 'Test 15m Alert')}
+          </button>
+        </div>
+      </div>
+
+      {/* Dismissible Live Pre-Match 15-Min Alert Banner */}
+      {activePreMatchAlerts.length > 0 && (
+        <div
+          role="alert"
+          className="bg-amber-50 border-2 border-amber-400 rounded-xl p-3 sm:p-3.5 space-y-2 shadow-sm"
+        >
+          {activePreMatchAlerts.map((al) => (
+            <div key={al.id} className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <BellRing className="w-5 h-5 text-amber-600 shrink-0 animate-bounce" />
+                <div className="min-w-0 text-xs">
+                  <p className="font-black text-slate-900 truncate">
+                    {bi(
+                      `ጨዋታው ሊጀምር ${al.minutesRemaining} ደቂቃ ቀረው — ${al.home} vs ${al.away}`,
+                      `Kickoff in ${al.minutesRemaining} min — ${al.home} vs ${al.away}`,
+                    )}
+                  </p>
+                  <p className="text-[11px] text-amber-900 font-semibold truncate">
+                    {al.leagueLabel} ·{' '}
+                    {al.reason === 'bet_placed'
+                      ? bi('የተወራረዱበት ጨዋታ', 'Your placed bet match')
+                      : bi('አስታውሰኝ (Remind me)', 'Remind me alert')}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  setActivePreMatchAlerts((prev) => prev.filter((item) => item.id !== al.id))
+                }
+                aria-label={bi('ዝጋ', 'Dismiss')}
+                className="w-8 h-8 rounded-lg bg-white hover:bg-amber-100 border border-amber-200 flex items-center justify-center text-slate-700 cursor-pointer shrink-0"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* TAB 1: SPORTSBOOK FIXTURES BOARD */}
       {subTab === 'fixtures' && (
         <div className="space-y-4">
@@ -2091,13 +2421,13 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
                   <span>{bi('ጨዋታዎች እና የ1 / X / 2 ኦዶች', 'Matches & 1 / X / 2 Odds')}</span>
                   <span>{bi('ስታትስ / +135', 'Stats / +135')}</span>
                 </div>
-                <div className="hidden sm:grid sm:grid-cols-[64px_1fr_repeat(3,64px)_84px] items-center gap-1 px-3 py-2 bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-600">
+                <div className="hidden sm:grid sm:grid-cols-[64px_1fr_repeat(3,64px)_118px] items-center gap-1 px-3 py-2 bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-600">
                   <span>{bi('ሰዓት', 'Time')}</span>
                   <span>{bi('ጨዋታ', 'Event')}</span>
                   <span className="text-center">{bi('1', 'Home')}</span>
                   <span className="text-center">{bi('X', 'Draw')}</span>
                   <span className="text-center">{bi('2', 'Away')}</span>
-                  <span className="text-center">{bi('ስታትስ', 'Stats/+')}</span>
+                  <span className="text-center">{bi('አስታውስ/+', 'Alert/+')}</span>
                 </div>
 
                 {visibleLeagueRows.length === 0 ? (
@@ -2186,7 +2516,7 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
                     <span>{bi('ቀጥታ ውጤት እና ኦዶች', 'Live Score & 1 / X / 2')}</span>
                     <span>{bi('ስታትስ / +135', 'Stats / +135')}</span>
                   </div>
-                  <div className="hidden sm:grid sm:grid-cols-[64px_1fr_repeat(3,64px)_84px] items-center gap-1 px-3 py-2 bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-600">
+                  <div className="hidden sm:grid sm:grid-cols-[64px_1fr_repeat(3,64px)_118px] items-center gap-1 px-3 py-2 bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-600">
                     <span>{bi('ውጤት', 'Score')}</span>
                     <span>{bi('ጨዋታ', 'Event')}</span>
                     <span className="text-center">{bi('1', 'Home')}</span>
@@ -2338,13 +2668,13 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
                   <span>{bi('ጨዋታዎች እና የ1 / X / 2 ኦዶች', 'Matches & 1 / X / 2 Odds')}</span>
                   <span>{bi('ስታትስ / +135', 'Stats / +135')}</span>
                 </div>
-                <div className="hidden sm:grid sm:grid-cols-[64px_1fr_repeat(3,64px)_84px] items-center gap-1 px-3 py-2 bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-600">
+                <div className="hidden sm:grid sm:grid-cols-[64px_1fr_repeat(3,64px)_118px] items-center gap-1 px-3 py-2 bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-600">
                   <span>{bi('ሰዓት', 'Time')}</span>
                   <span>{bi('ጨዋታ', 'Event')}</span>
                   <span className="text-center">{bi('1', 'Home')}</span>
                   <span className="text-center">{bi('X', 'Draw')}</span>
                   <span className="text-center">{bi('2', 'Away')}</span>
-                  <span className="text-center">{bi('ስታትስ', 'Stats/+')}</span>
+                  <span className="text-center">{bi('አስታውስ/+', 'Alert/+')}</span>
                 </div>
 
                 {visiblePopularRows.length === 0 ? (

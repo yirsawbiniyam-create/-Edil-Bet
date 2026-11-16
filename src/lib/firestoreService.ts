@@ -905,7 +905,7 @@ export async function submitTelebirrDeposit(params: {
   rawTxId: string;
   amount: number;
   registeredPhone: string | null;
-}): Promise<{ txId: string; amount: number }> {
+}): Promise<{ txId: string; amount: number; autoVerifiedBySms: boolean }> {
   const { user, wallet, settings, rawPhone, rawTxId, amount, registeredPhone } = params;
   const playerPhone = normalizePhone(rawPhone);
   const txId = normalizeTxId(rawTxId);
@@ -916,32 +916,40 @@ export async function submitTelebirrDeposit(params: {
   if (!TX_ID_REGEX.test(txId)) {
     throw new Error('ትራንሳክሽን አይዲው ትክክል አይደለም (ቢያንስ 6 ፊደል ወይም ቁጥር ይሁን)።');
   }
-  if (!Number.isFinite(amount) || amount < 100) {
+
+  // Check server webhook cache in case service account REST persistence is not enabled in .env
+  let serverSmsCheck: { found?: boolean; status?: string; amount?: number } | null = null;
+  try {
+    const resp = await fetch(`/api/telebirr-sms-webhook/check/${encodeURIComponent(txId)}`);
+    if (resp.ok) {
+      serverSmsCheck = (await resp.json()) as {
+        found?: boolean;
+        status?: string;
+        amount?: number;
+      };
+    }
+  } catch {
+    // Non-fatal if running purely offline/client-only
+  }
+
+  if (serverSmsCheck?.found && serverSmsCheck.status === 'used') {
+    throw new Error('ይህ የትራንዛክሽን ቁጥር ከዚህ በፊት ጥቅም ላይ ውሏል!');
+  }
+
+  const fallbackAmount =
+    serverSmsCheck?.found && serverSmsCheck.status === 'unused' && typeof serverSmsCheck.amount === 'number'
+      ? Number(serverSmsCheck.amount.toFixed(2))
+      : Number(amount);
+
+  if (!Number.isFinite(fallbackAmount) || fallbackAmount < 100) {
     throw new Error('ዝቅተኛው የዲፖሲት መጠን 100 ብር ነው።');
   }
-  if (amount > 500000) {
+  if (fallbackAmount > 500000) {
     throw new Error('ከፍተኛው የአንድ ጊዜ ዲፖሲት 500,000 ብር ነው።');
   }
 
-  // Verify transaction ID has not been used previously
+  const smsRef = doc(db, 'received_sms_transactions', txId);
   const usedTxRef = doc(db, 'usedTxIds', txId);
-  try {
-    const existingTx = await getDoc(usedTxRef);
-    if (existingTx.exists()) {
-      throw new Error('ይህ ትራንሳክሽን አይዲ ቀደም ብሎ ጥቅም ላይ ውሏል! አዲስ ትራንሳክሽን አይዲ ያስገቡ።');
-    }
-  } catch (err) {
-    if (err instanceof Error && err.message.includes('ቀደም ብሎ')) {
-      throw err;
-    }
-    // Permission denied on getDoc means the document already exists and belongs to another user!
-    const msg = err instanceof Error ? err.message : '';
-    if (msg.includes('Missing or insufficient permissions') || msg.includes('permission-denied')) {
-      throw new Error('ይህ ትራንሳክሽን አይዲ ቀደም ብሎ በሌላ ዲፖሲት ጥቅም ላይ ውሏል!');
-    }
-  }
-
-  const batch = writeBatch(db);
   const depositRef = doc(db, 'deposits', txId);
   const ledgerId = makeDocId('led');
   const ledgerRef = doc(db, 'ledger', ledgerId);
@@ -951,64 +959,170 @@ export async function submitTelebirrDeposit(params: {
   const safeName = (wallet.displayName || user.displayName || 'ተጫዋች').slice(0, 80);
   const effectivePhone = registeredPhone || playerPhone;
 
-  batch.set(usedTxRef, {
-    txId,
-    uid: user.uid,
-    amount,
-    createdAt: serverTimestamp(),
-  });
-
-  batch.set(depositRef, {
-    id: txId,
-    uid: user.uid,
-    playerName: safeName,
-    playerPhone: effectivePhone,
-    systemPhone: settings.depositPhone,
-    txId,
-    amount,
-    status: 'verified',
-    verifiedMessage: 'ትክክል ነው — የቴሌብር መተላለፍ ተረጋግጧል',
-    createdAt: serverTimestamp(),
-  });
-
-  batch.set(ledgerRef, {
-    id: ledgerId,
-    uid: user.uid,
-    playerName: safeName,
-    playerPhone: effectivePhone,
-    type: 'income',
-    category: 'deposit',
-    amount,
-    referenceId: txId,
-    description: `በቴሌብር ዲፖሲት (${txId})`.slice(0, 180),
-    createdAt: serverTimestamp(),
-  });
-
-  if (!wallet.hasDeposited || !registeredPhone) {
-    batch.set(privateRef, {
-      uid: user.uid,
-      email: (user.email || 'user@example.com').slice(0, 150),
-      telebirrPhone: effectivePhone,
-      updatedAt: serverTimestamp(),
-    });
-  }
-
-  batch.update(userRef, {
-    balance: Number((wallet.balance + amount).toFixed(2)),
-    hasDeposited: true,
-    totalDeposited: Number((wallet.totalDeposited + amount).toFixed(2)),
-    lastActionType: 'deposit',
-    lastActionRef: txId,
-    updatedAt: serverTimestamp(),
-  });
+  let finalAmount = fallbackAmount;
+  let autoVerifiedBySms = Boolean(serverSmsCheck?.found && serverSmsCheck.status === 'unused');
 
   try {
-    await batch.commit();
+    await runTransaction(db, async (tx) => {
+      const [smsSnap, usedSnap, userSnap] = await Promise.all([
+        tx.get(smsRef),
+        tx.get(usedTxRef),
+        tx.get(userRef),
+      ]);
+
+      if (!userSnap.exists()) {
+        throw new Error('የተጫዋች ቦርሳ አልተገኘም።');
+      }
+      if (usedSnap.exists()) {
+        throw new Error('ይህ ትራንሳክሽን አይዲ ቀደም ብሎ ጥቅም ላይ ውሏል! አዲስ ትራንሳክሽን አይዲ ያስገቡ።');
+      }
+
+      const currentWallet = userSnap.data() as UserWallet;
+      let verifiedAmount = fallbackAmount;
+      let hasFirestoreSms = false;
+
+      if (smsSnap.exists()) {
+        const smsData = smsSnap.data() as { status?: string; amount?: number };
+        if (smsData.status !== 'unused') {
+          throw new Error('ይህ የትራንዛክሽን ቁጥር ከዚህ በፊት ጥቅም ላይ ውሏል!');
+        }
+        const parsedSmsAmt = Number(smsData.amount);
+        if (!Number.isFinite(parsedSmsAmt) || parsedSmsAmt < 100 || parsedSmsAmt > 500000) {
+          throw new Error('በSMS የተመዘገበው የብር መጠን ከተፈቀደው ገደብ ውጭ ነው።');
+        }
+        verifiedAmount = Number(parsedSmsAmt.toFixed(2));
+        hasFirestoreSms = true;
+        autoVerifiedBySms = true;
+      }
+
+      finalAmount = verifiedAmount;
+
+      if (hasFirestoreSms) {
+        tx.update(smsRef, {
+          status: 'used',
+          used_by: user.uid,
+          used_at: serverTimestamp(),
+        });
+      }
+
+      tx.set(usedTxRef, {
+        txId,
+        uid: user.uid,
+        amount: verifiedAmount,
+        createdAt: serverTimestamp(),
+      });
+
+      tx.set(depositRef, {
+        id: txId,
+        uid: user.uid,
+        playerName: safeName,
+        playerPhone: effectivePhone,
+        systemPhone: settings.depositPhone,
+        txId,
+        amount: verifiedAmount,
+        status: 'verified',
+        verifiedMessage: hasFirestoreSms
+          ? 'ትክክል ነው — በቴሌብር SMS ዌብሆክ በራስ-ሰር ተረጋግጧል'
+          : 'ትክክል ነው — የቴሌብር መተላለፍ ተረጋግጧል',
+        createdAt: serverTimestamp(),
+      });
+
+      tx.set(ledgerRef, {
+        id: ledgerId,
+        uid: user.uid,
+        playerName: safeName,
+        playerPhone: effectivePhone,
+        type: 'income',
+        category: 'deposit',
+        amount: verifiedAmount,
+        referenceId: txId,
+        description: `በቴሌብር ዲፖሲት (${txId})`.slice(0, 180),
+        createdAt: serverTimestamp(),
+      });
+
+      if (!currentWallet.hasDeposited || !registeredPhone) {
+        tx.set(privateRef, {
+          uid: user.uid,
+          email: (user.email || 'user@example.com').slice(0, 150),
+          telebirrPhone: effectivePhone,
+          updatedAt: serverTimestamp(),
+        });
+      }
+
+      tx.update(userRef, {
+        balance: Number((currentWallet.balance + verifiedAmount).toFixed(2)),
+        hasDeposited: true,
+        totalDeposited: Number((currentWallet.totalDeposited + verifiedAmount).toFixed(2)),
+        lastActionType: 'deposit',
+        lastActionRef: txId,
+        updatedAt: serverTimestamp(),
+      });
+    });
+
+    if (serverSmsCheck?.found && serverSmsCheck.status === 'unused') {
+      await fetch('/api/telebirr-sms-webhook/consume', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ txId, uid: user.uid }),
+      }).catch(() => undefined);
+    }
   } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.message.includes('ጥቅም ላይ ውሏል') ||
+        error.message.includes('አልተገኘም') ||
+        error.message.includes('ገደብ'))
+    ) {
+      throw error;
+    }
     handleFirestoreError(error, OperationType.WRITE, `deposits/${txId}`);
   }
 
-  return { txId, amount };
+  return { txId, amount: finalAmount, autoVerifiedBySms };
+}
+
+export async function adminRecordSimulatedTelebirrSms(params: {
+  rawMessage: string;
+}): Promise<{ transactionId: string; amount: number }> {
+  const message = params.rawMessage.trim();
+  const amountMatch = message.match(/(?:ETB|Br|ብር)\s*([\d,]+(?:\.\d{1,2})?)/i);
+  const txIdMatch = message.match(
+    /(?:transaction\s+(?:number|id)\s*(?:is|:)?|የግብይት\s*ቁጥር\s*(?:is|:)?|TX\s*(?:ID|#)?\s*(?:is|:)?)\s*([A-Za-z0-9]{6,24})/i,
+  );
+  if (!amountMatch || !txIdMatch) {
+    throw new Error('የቴሌብር SMS ቅርጽ ትክክል አይደለም (ETB amount እና transaction number ያካትቱ)።');
+  }
+  const amount = Number(parseFloat(amountMatch[1].replace(/,/g, '')).toFixed(2));
+  const transactionId = txIdMatch[1].trim().toUpperCase();
+  if (!Number.isFinite(amount) || amount < 100 || amount > 500000) {
+    throw new Error('መጠኑ ከ 100 እስከ 500,000 ብር መሆን አለበት።');
+  }
+  if (!TX_ID_REGEX.test(transactionId)) {
+    throw new Error('ትራንሳክሽን አይዲው ከ 6 እስከ 24 ፊደል/ቁጥር መሆን አለበት።');
+  }
+
+  const smsRef = doc(db, 'received_sms_transactions', transactionId);
+  try {
+    const existing = await getDoc(smsRef);
+    if (existing.exists()) {
+      throw new Error(`ትራንሳክሽን ${transactionId} ቀደም ብሎ ተመዝግቧል።`);
+    }
+    await setDoc(smsRef, {
+      transaction_id: transactionId,
+      amount,
+      message: message.slice(0, 600),
+      status: 'unused',
+      source: 'admin_sim',
+      created_at: serverTimestamp(),
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('ቀደም ብሎ')) {
+      throw error;
+    }
+    handleFirestoreError(error, OperationType.WRITE, `received_sms_transactions/${transactionId}`);
+  }
+
+  return { transactionId, amount };
 }
 
 export async function recordGameBet(params: {

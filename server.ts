@@ -1,4 +1,6 @@
 import express from 'express';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
 import { createServer as createHttpServer } from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -278,6 +280,167 @@ interface BeSoccerRawMatch {
   url?: string;
 }
 
+function decodeHtmlEntities(input: string): string {
+  return input
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ')
+    .trim();
+}
+
+function stripTags(html: string): string {
+  return decodeHtmlEntities(html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim());
+}
+
+function parseBeSoccerHtmlFixtures(html: string, now: Date): ExternalMatchDTO[] {
+  const results: ExternalMatchDTO[] = [];
+  const seen = new Set<string>();
+  const todayKey = getEatDateKey(now);
+
+  // Locate every competition header (`panel-title`) to associate matches with their league
+  const panelHeaders: Array<{ pos: number; leagueName: string }> = [];
+  const panelRe = /<div[^>]*class="[^"]*panel-title[^"]*"[^>]*>([\s\S]*?)<\/div>\s*<\/div>/gi;
+  let pm: RegExpExecArray | null;
+  while ((pm = panelRe.exec(html)) !== null) {
+    const clean = stripTags(pm[1]).slice(0, 80);
+    if (clean) {
+      panelHeaders.push({ pos: pm.index, leagueName: clean });
+    }
+  }
+
+  let headerPtr = 0;
+  const matchRe = /<a\b[^>]*class="[^"]*match-link[^"]*"[^>]*>([\s\S]*?)<\/a>/gi;
+  let mm: RegExpExecArray | null;
+
+  while ((mm = matchRe.exec(html)) !== null) {
+    const tag = mm[0];
+    const body = mm[1];
+    const pos = mm.index;
+
+    while (headerPtr + 1 < panelHeaders.length && panelHeaders[headerPtr + 1].pos < pos) {
+      headerPtr += 1;
+    }
+    const compName =
+      headerPtr < panelHeaders.length && panelHeaders[headerPtr].pos < pos
+        ? panelHeaders[headerPtr].leagueName
+        : 'BeSoccer Live Program';
+
+    const hrefMatch = tag.match(/href="([^"]+)"/i);
+    const idAttrMatch = tag.match(/id="match-([^"]+)"/i);
+    const statusMatch = tag.match(/data-status-id="([^"]+)"/i);
+    const startAttrMatch = tag.match(/starttime="([^"]+)"/i);
+
+    const statusId = statusMatch?.[1] || '0';
+    // Skip finished matches (1) or postponed/cancelled if clearly marked Fin
+    if (statusId === '1') continue;
+
+    const teamNames = [...body.matchAll(/<div[^>]*class="[^"]*team-name[^"]*"[^>]*>([\s\S]*?)<\/div>/gi)]
+      .map((m) => stripTags(m[1]))
+      .filter(Boolean);
+    if (teamNames.length < 2) continue;
+
+    const home = teamNames[0];
+    const away = teamNames[1];
+
+    const shields = [...body.matchAll(/<img[^>]*class="[^"]*team-shield[^"]*"[^>]*src="([^"]+)"/gi)].map(
+      (m) => m[1],
+    );
+
+    const r1Match = body.match(/class="[^"]*r1[^"]*"[^>]*>(\d+)</i);
+    const r2Match = body.match(/class="[^"]*r2[^"]*"[^>]*>(\d+)</i);
+    const tagLiveMatch = body.match(/<div[^>]*class="[^"]*\btag\b[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+    const tagText = tagLiveMatch ? stripTags(tagLiveMatch[1]) : '';
+    const isFinishedMarker = /\b(fin|ft|aet|pen)\b/i.test(tagText) || /\b(fin|ft)\b/i.test(body);
+    if (isFinishedMarker) continue;
+
+    const isLive =
+      statusId === '2' ||
+      statusId === '3' ||
+      Boolean(r1Match && r2Match && !isFinishedMarker) ||
+      /^\d{1,3}'?$/.test(tagText) ||
+      /^ht$/i.test(tagText);
+
+    let kickoff = now;
+    if (startAttrMatch?.[1]) {
+      const parsedDt = new Date(startAttrMatch[1]);
+      if (!Number.isNaN(parsedDt.getTime())) {
+        kickoff = parsedDt;
+      }
+    } else {
+      const hourMatch = body.match(/class="[^"]*\btime\b[^"]*"[^>]*>(\d{1,2}):(\d{2})</i);
+      if (hourMatch) {
+        const dateTextMatch = body.match(/class="[^"]*\bdate\b[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+        const dtCandidate = dateTextMatch
+          ? new Date(`${stripTags(dateTextMatch[1])} ${hourMatch[1]}:${hourMatch[2]}:00 UTC`)
+          : null;
+        if (dtCandidate && !Number.isNaN(dtCandidate.getTime())) {
+          kickoff = dtCandidate;
+        }
+      }
+    }
+
+    const diffHours = (kickoff.getTime() - now.getTime()) / 3600_000;
+    const dateKey = getEatDateKey(kickoff);
+
+    let tf: TimeframeKey;
+    if (isLive) tf = 'live';
+    else if (diffHours >= -0.25 && diffHours <= 6) tf = 'hourly';
+    else if (dateKey === todayKey || diffHours <= 24) tf = 'daily';
+    else if (diffHours <= 168) tf = 'weekly';
+    else tf = 'monthly';
+
+    const dedupeKey = `${home.toLowerCase()}_${away.toLowerCase()}_${dateKey}`;
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+
+    const parsedMin = /^ht$/i.test(tagText)
+      ? 45
+      : parseInt(tagText.replace(/[^0-9]/g, ''), 10);
+    const liveMin = isLive
+      ? Math.min(89, Math.max(1, Number.isFinite(parsedMin) ? parsedMin : 25))
+      : undefined;
+
+    const lgMeta = mapLeagueFromName(compName);
+    const odds = synthesizeBalancedOdds(`bsweb-${home}-${away}-${dateKey}`);
+    const besoccerUrl =
+      hrefMatch?.[1] && hrefMatch[1].startsWith('http')
+        ? hrefMatch[1]
+        : `https://www.besoccer.com/search?q=${encodeURIComponent(`${home} ${away}`)}`;
+
+    results.push({
+      id: `bsweb_${idAttrMatch?.[1] || hashSeed(dedupeKey)}`,
+      league: lgMeta.league,
+      leagueLabel: compName === 'BeSoccer Live Program' ? lgMeta.leagueLabel : compName,
+      tier: lgMeta.tier,
+      tierLabel: lgMeta.tierLabel,
+      timeframe: tf,
+      dateKey,
+      kickoffIso: kickoff.toISOString(),
+      kickoffLabel: formatAddisKickoff(kickoff, now, tf, liveMin),
+      scheduleGroupLabel: getGroupLabel(tf),
+      isLive,
+      liveMinute: liveMin,
+      liveHomeGoals: isLive ? Number(r1Match?.[1] || 0) : undefined,
+      liveAwayGoals: isLive ? Number(r2Match?.[1] || 0) : undefined,
+      home,
+      away,
+      homeCode: makeCode(home),
+      awayCode: makeCode(away),
+      homeLogo: shields[0],
+      awayLogo: shields[1],
+      ...odds,
+      featured: lgMeta.featured || isLive,
+      besoccerUrl,
+      sourceName: 'BeSoccer Official Live Program',
+    });
+  }
+
+  return results;
+}
+
 async function tryBeSoccer7DaysDirect(): Promise<{
   matches: ExternalMatchDTO[];
   note: string;
@@ -369,36 +532,68 @@ async function tryBeSoccer7DaysDirect(): Promise<{
 
       if (parsed.length > 0) {
         return {
-          matches: parsed.slice(0, 90),
+          matches: parsed.slice(0, 350),
           note: `BeSoccer Official API · 7-Day Program (${parsed.length} matches)`,
         };
       }
     } catch {
-      // Fall through cleanly
+      // Fall through cleanly to BeSoccer web feed
     }
   }
 
+  // Direct BeSoccer Web Program Scraping (Homepage + Upcoming Days)
   try {
-    const probe = await fetch('https://www.besoccer.com/', {
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0.0.0 Safari/537.36',
-        Accept: 'text/html',
-      },
-      signal: AbortSignal.timeout(2500),
-    });
-    return {
-      matches: [],
-      note: probe.ok
-        ? 'BeSoccer Web Reachable · 7-Day Real-Time Match Feed Active'
-        : `BeSoccer Sync · 7-Day Live & Upcoming Match Program Active`,
+    const besoccerHeaders = {
+      'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9',
     };
+    const dayUrls = [
+      'https://www.besoccer.com/',
+      ...Array.from({ length: 4 }, (_, i) => {
+        const ymd = getEatDateKey(new Date(now.getTime() + (i + 1) * 86400_000));
+        return `https://www.besoccer.com/livescore/${ymd}`;
+      }),
+    ];
+
+    const pageResps = await Promise.allSettled(
+      dayUrls.map(async (u) => {
+        const r = await fetch(u, {
+          headers: besoccerHeaders,
+          signal: AbortSignal.timeout(5500),
+        });
+        if (!r.ok) return '';
+        return await r.text();
+      }),
+    );
+
+    const webMatches: ExternalMatchDTO[] = [];
+    const seenKeys = new Set<string>();
+    for (const pr of pageResps) {
+      if (pr.status !== 'fulfilled' || !pr.value) continue;
+      for (const item of parseBeSoccerHtmlFixtures(pr.value, now)) {
+        const key = `${item.home.toLowerCase()}_${item.away.toLowerCase()}_${item.dateKey}`;
+        if (seenKeys.has(key)) continue;
+        seenKeys.add(key);
+        webMatches.push(item);
+      }
+    }
+
+    if (webMatches.length > 0) {
+      return {
+        matches: webMatches,
+        note: `BeSoccer.com Real-Time Match Program (${webMatches.length} fixtures)`,
+      };
+    }
   } catch {
-    return {
-      matches: [],
-      note: 'BeSoccer Sync · 7-Day Live & Upcoming Match Program Active',
-    };
+    // Fall through cleanly
   }
+
+  return {
+    matches: [],
+    note: 'BeSoccer Sync · 7-Day Live & Upcoming Match Program Active',
+  };
 }
 
 interface EspnCompetitor {
@@ -582,14 +777,14 @@ async function fetch7DayLiveSoccerFeed(): Promise<ExternalMatchDTO[]> {
     return tDiff;
   });
 
-  // Cap per day so ALL 7 upcoming days are richly populated without one single day crowding out others
+  // Keep full 7-day real schedule across all leagues without artificial 12/day truncation
   const perDayCounts = new Map<string, number>();
   const bucketCaps: Record<TimeframeKey, number> = {
-    live: 12,
-    hourly: 14,
-    daily: 18,
-    weekly: 70,
-    monthly: 18,
+    live: 60,
+    hourly: 80,
+    daily: 120,
+    weekly: 320,
+    monthly: 60,
   };
   const bucketCounts: Record<TimeframeKey, number> = {
     live: 0,
@@ -603,7 +798,7 @@ async function fetch7DayLiveSoccerFeed(): Promise<ExternalMatchDTO[]> {
     if (bucketCounts[m.timeframe] >= bucketCaps[m.timeframe]) return false;
     if (!m.isLive && m.timeframe === 'weekly') {
       const c = perDayCounts.get(m.dateKey) || 0;
-      if (c >= 12) return false;
+      if (c >= 65) return false;
       perDayCounts.set(m.dateKey, c + 1);
     }
     bucketCounts[m.timeframe] += 1;
@@ -1069,10 +1264,286 @@ function buildFallbackStandings(
   return rows.map((r, i) => ({ ...r, rank: i + 1 }));
 }
 
+interface ServerSmsTransaction {
+  transaction_id: string;
+  amount: number;
+  message: string;
+  status: 'unused' | 'used';
+  source: string;
+  created_at: string;
+  used_by?: string;
+  used_at?: string;
+}
+
+const smsTransactionStore = new Map<string, ServerSmsTransaction>();
+
+function loadFirebaseAppletConfig(): { projectId?: string; firestoreDatabaseId?: string } {
+  try {
+    const raw = fs.readFileSync(path.resolve(__dirname, 'firebase-applet-config.json'), 'utf8');
+    return JSON.parse(raw) as { projectId?: string; firestoreDatabaseId?: string };
+  } catch {
+    return {};
+  }
+}
+
+async function getGoogleServiceAccountAccessToken(): Promise<string | null> {
+  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL?.trim();
+  const privateKeyRaw = process.env.FIREBASE_PRIVATE_KEY?.trim();
+  if (!clientEmail || !privateKeyRaw) return null;
+
+  try {
+    const privateKey = privateKeyRaw.replace(/\\n/g, '\n');
+    const nowSec = Math.floor(Date.now() / 1000);
+    const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url');
+    const payload = Buffer.from(
+      JSON.stringify({
+        iss: clientEmail,
+        scope: 'https://www.googleapis.com/auth/datastore',
+        aud: 'https://oauth2.googleapis.com/token',
+        iat: nowSec,
+        exp: nowSec + 3600,
+      }),
+    ).toString('base64url');
+
+    const sign = crypto.createSign('RSA-SHA256');
+    sign.update(`${header}.${payload}`);
+    sign.end();
+    const signature = sign.sign(privateKey, 'base64url');
+    const assertion = `${header}.${payload}.${signature}`;
+
+    const tokenResp = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+        assertion,
+      }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!tokenResp.ok) return null;
+    const tokenJson = (await tokenResp.json()) as { access_token?: string };
+    return tokenJson.access_token || null;
+  } catch {
+    return null;
+  }
+}
+
+async function persistSmsTransactionToFirestoreRest(tx: ServerSmsTransaction): Promise<boolean> {
+  const cfg = loadFirebaseAppletConfig();
+  const projectId = process.env.FIREBASE_PROJECT_ID?.trim() || cfg.projectId;
+  const databaseId = cfg.firestoreDatabaseId || '(default)';
+  if (!projectId) return false;
+
+  const accessToken = await getGoogleServiceAccountAccessToken();
+  if (!accessToken) return false;
+
+  try {
+    const docPath = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/databases/${encodeURIComponent(databaseId)}/documents/received_sms_transactions/${encodeURIComponent(tx.transaction_id)}`;
+    const existingResp = await fetch(docPath, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      signal: AbortSignal.timeout(4500),
+    });
+    if (existingResp.ok) {
+      return true; // Duplicate TX ID safely ignored
+    }
+
+    const createUrl = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/databases/${encodeURIComponent(databaseId)}/documents/received_sms_transactions?documentId=${encodeURIComponent(tx.transaction_id)}`;
+    const createResp = await fetch(createUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        fields: {
+          transaction_id: { stringValue: tx.transaction_id },
+          amount: { doubleValue: tx.amount },
+          message: { stringValue: tx.message.slice(0, 600) },
+          status: { stringValue: 'unused' },
+          source: { stringValue: tx.source.slice(0, 40) },
+          created_at: { timestampValue: tx.created_at },
+        },
+      }),
+      signal: AbortSignal.timeout(5000),
+    });
+    return createResp.ok;
+  } catch {
+    return false;
+  }
+}
+
 async function startServer() {
   const app = express();
   const httpServer = createHttpServer(app);
   const port = Number(process.env.PORT) || 3000;
+
+  app.use(express.json({ limit: '256kb' }));
+
+  const WEBHOOK_SECRET_KEY =
+    process.env.TELEBIRR_WEBHOOK_SECRET?.trim() || 'yene_betting_secret_key_123';
+
+  // MacroDroid / Android SMS Forwarder Webhook for Telebirr Deposits
+  app.post('/api/telebirr-sms-webhook', async (req, res) => {
+    try {
+      const { secret_key, message, source } = (req.body || {}) as {
+        secret_key?: string;
+        message?: string;
+        source?: string;
+      };
+
+      if (secret_key !== WEBHOOK_SECRET_KEY) {
+        res.status(403).json({
+          success: false,
+          error: 'Unauthorized: Invalid secret key',
+        });
+        return;
+      }
+
+      if (!message || typeof message !== 'string') {
+        res.status(400).json({
+          success: false,
+          error: 'Message body is missing',
+        });
+        return;
+      }
+
+      const amountRegex = /(?:ETB|Br|ብር)\s*([\d,]+(?:\.\d{1,2})?)/i;
+      const txIdRegex =
+        /(?:transaction\s+(?:number|id)\s*(?:is|:)?|የግብይት\s*ቁጥር\s*(?:is|:)?|TX\s*(?:ID|#)?\s*(?:is|:)?)\s*([A-Za-z0-9]{6,24})/i;
+
+      const amountMatch = message.match(amountRegex);
+      const txIdMatch = message.match(txIdRegex);
+
+      if (!amountMatch || !txIdMatch) {
+        res.status(400).json({
+          success: false,
+          error: 'Failed to parse Telebirr SMS format (expected amount & transaction number)',
+        });
+        return;
+      }
+
+      const amount = Number(parseFloat(amountMatch[1].replace(/,/g, '')).toFixed(2));
+      const transactionId = txIdMatch[1].trim().toUpperCase();
+
+      if (!Number.isFinite(amount) || amount < 100 || amount > 500000) {
+        res.status(400).json({
+          success: false,
+          error: 'Parsed amount must be between 100 and 500,000 ETB',
+        });
+        return;
+      }
+
+      if (!/^[A-Z0-9]{6,24}$/.test(transactionId)) {
+        res.status(400).json({
+          success: false,
+          error: 'Invalid parsed Transaction ID format',
+        });
+        return;
+      }
+
+      const existing = smsTransactionStore.get(transactionId);
+      if (existing) {
+        res.json({
+          success: true,
+          duplicate: true,
+          transactionId,
+          amount: existing.amount,
+          status: existing.status,
+          message: 'Transaction already recorded',
+        });
+        return;
+      }
+
+      const txRecord: ServerSmsTransaction = {
+        transaction_id: transactionId,
+        amount,
+        message: message.trim().slice(0, 600),
+        status: 'unused',
+        source: typeof source === 'string' && source.trim() ? source.trim().slice(0, 40) : 'macrodroid',
+        created_at: new Date().toISOString(),
+      };
+
+      smsTransactionStore.set(transactionId, txRecord);
+      const persistedToFirestore = await persistSmsTransactionToFirestoreRest(txRecord);
+
+      res.json({
+        success: true,
+        transactionId,
+        amount,
+        status: txRecord.status,
+        persistedToFirestore,
+        transaction: txRecord,
+      });
+    } catch (err) {
+      res.status(500).json({
+        success: false,
+        error: err instanceof Error ? err.message : 'Internal Server Error',
+      });
+    }
+  });
+
+  app.get('/api/telebirr-sms-webhook/check/:txId', (req, res) => {
+    const cleanId = String(req.params.txId || '')
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, '');
+    if (!/^[A-Z0-9]{6,24}$/.test(cleanId)) {
+      res.json({ found: false });
+      return;
+    }
+    const found = smsTransactionStore.get(cleanId);
+    if (!found) {
+      res.json({ found: false });
+      return;
+    }
+    res.json({
+      found: true,
+      transaction_id: found.transaction_id,
+      amount: found.amount,
+      status: found.status,
+      source: found.source,
+      created_at: found.created_at,
+    });
+  });
+
+  app.post('/api/telebirr-sms-webhook/consume', (req, res) => {
+    const { txId, uid } = (req.body || {}) as { txId?: string; uid?: string };
+    const cleanId = String(txId || '')
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, '');
+    const record = smsTransactionStore.get(cleanId);
+    if (!record) {
+      res.json({ ok: true, found: false });
+      return;
+    }
+    if (record.status === 'used') {
+      res.status(409).json({
+        ok: false,
+        error: 'ይህ የትራንዛክሽን ቁጥር ከዚህ በፊት ጥቅም ላይ ውሏል!',
+      });
+      return;
+    }
+    record.status = 'used';
+    record.used_by = typeof uid === 'string' ? uid.slice(0, 128) : undefined;
+    record.used_at = new Date().toISOString();
+    smsTransactionStore.set(cleanId, record);
+    res.json({ ok: true, found: true, amount: record.amount });
+  });
+
+  app.get('/api/telebirr-sms-webhook/recent', (_req, res) => {
+    const recent = Array.from(smsTransactionStore.values())
+      .slice(-20)
+      .reverse()
+      .map((item) => ({
+        transaction_id: item.transaction_id,
+        amount: item.amount,
+        status: item.status,
+        source: item.source,
+        created_at: item.created_at,
+      }));
+    res.json({ items: recent });
+  });
 
   app.get('/api/besoccer/schedule', async (req, res) => {
     const force = req.query.force === '1';

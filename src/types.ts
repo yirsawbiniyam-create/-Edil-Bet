@@ -428,3 +428,15 @@ export interface WeeklyLeaderboardEntry {
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
+
+export interface ReceivedSmsTransaction {
+  transaction_id: string;
+  amount: number;
+  message: string;
+  status: 'unused' | 'used';
+  source?: string;
+  created_at: Timestamp;
+  used_by?: string;
+  used_at?: Timestamp;
+}
+

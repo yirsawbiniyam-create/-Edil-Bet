@@ -1754,7 +1754,7 @@ export default function App() {
 
             {activeTab === 'history' && (
               <div className="pt-3">
-                <HistoryPanel bets={myBets} />
+                <HistoryPanel bets={myBets} tickets={footballTickets} />
               </div>
             )}
 

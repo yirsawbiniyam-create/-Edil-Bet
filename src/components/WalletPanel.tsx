@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { User } from 'firebase/auth';
+import { doc, onSnapshot, runTransaction, serverTimestamp } from 'firebase/firestore';
 import {
   ArrowDownCircle,
   ArrowUpCircle,
@@ -8,18 +9,24 @@ import {
   Clock,
   Copy,
   Lock,
+  MessageSquareText,
   Phone,
   ShieldCheck,
   XCircle,
 } from 'lucide-react';
+import { db, handleFirestoreError, OperationType } from '../firebase';
 import { formatETB } from '../lib/gameEngine';
 import {
+  normalizePhone,
+  normalizeTxId,
+  PHONE_REGEX,
   runSystemWithdrawalVerification,
-  submitTelebirrDeposit,
   submitTelebirrWithdrawal,
+  TX_ID_REGEX,
 } from '../lib/firestoreService';
 import {
   DepositRecord,
+  ReceivedSmsTransaction,
   TelebirrSettings,
   UserWallet,
   WithdrawalRecord,
@@ -50,9 +57,16 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
   // Deposit Form
   const [depositPhone, setDepositPhone] = useState(registeredPhone || '');
   const [txIdInput, setTxIdInput] = useState('');
-  const [depositAmount, setDepositAmount] = useState('100');
   const [isVerifyingDeposit, setIsVerifyingDeposit] = useState(false);
   const [depositSuccessMsg, setDepositSuccessMsg] = useState<string | null>(null);
+
+  // Real-time `received_sms_transactions` lookup state
+  const normalizedTx = useMemo(() => normalizeTxId(txIdInput), [txIdInput]);
+  const [smsLookupState, setSmsLookupState] = useState<{
+    state: 'idle' | 'checking' | 'unused' | 'used' | 'not_found';
+    amount?: number;
+    sourceLabel?: string;
+  }>({ state: 'idle' });
 
   // Withdraw Form
   const [withdrawPhone, setWithdrawPhone] = useState(registeredPhone || '');
@@ -66,6 +80,89 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
     }
   }, [registeredPhone]);
 
+  // Real-time Firestore + Webhook lookup whenever user enters >= 6 TX ID chars
+  useEffect(() => {
+    if (!TX_ID_REGEX.test(normalizedTx)) {
+      setSmsLookupState({ state: 'idle' });
+      return;
+    }
+
+    let cancelled = false;
+    setSmsLookupState({ state: 'checking' });
+
+    const smsDocRef = doc(db, 'received_sms_transactions', normalizedTx);
+    const unsub = onSnapshot(
+      smsDocRef,
+      async (snap) => {
+        if (cancelled) return;
+        if (snap.exists()) {
+          const data = snap.data() as ReceivedSmsTransaction;
+          if (data.status === 'unused') {
+            setSmsLookupState({
+              state: 'unused',
+              amount: data.amount,
+              sourceLabel: 'Firestore SMS',
+            });
+          } else {
+            setSmsLookupState({
+              state: 'used',
+              amount: data.amount,
+              sourceLabel: 'Firestore SMS',
+            });
+          }
+          return;
+        }
+
+        // Check Express Webhook server cache if not synced via service-account REST yet
+        try {
+          const resp = await fetch(
+            `/api/telebirr-sms-webhook/check/${encodeURIComponent(normalizedTx)}`,
+          );
+          if (!cancelled && resp.ok) {
+            const srv = (await resp.json()) as {
+              found?: boolean;
+              status?: string;
+              amount?: number;
+            };
+            if (srv.found && typeof srv.amount === 'number') {
+              if (srv.status === 'unused') {
+                setSmsLookupState({
+                  state: 'unused',
+                  amount: srv.amount,
+                  sourceLabel: 'Telebirr Webhook',
+                });
+              } else {
+                setSmsLookupState({
+                  state: 'used',
+                  amount: srv.amount,
+                  sourceLabel: 'Telebirr Webhook',
+                });
+              }
+              return;
+            }
+          }
+        } catch {
+          // Ignore webhook probe network failure
+        }
+
+        if (!cancelled) {
+          setSmsLookupState({ state: 'not_found' });
+        }
+      },
+      (error) => {
+        console.error('received_sms_transactions lookup error:', error);
+        if (!cancelled) {
+          setSmsLookupState({ state: 'not_found' });
+        }
+      },
+    );
+
+    return () => {
+      cancelled = true;
+      unsub();
+    };
+  }, [normalizedTx]);
+
   const handleCopyPhone = async () => {
     if (!settings?.depositPhone) return;
     try {
@@ -78,10 +175,214 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
     }
   };
 
+  /**
+   * Directly runs an atomic Firestore transaction that:
+   * 1. Queries `received_sms_transactions/{txId}` for the user's Transaction ID.
+   * 2. Verifies the document exists and has `status === 'unused'`.
+   * 3. Atomically updates `status` to `'used'` (with `used_by` + `used_at`) and credits
+   *    the verified SMS amount to `users/{user.uid}` (plus `deposits`, `usedTxIds`, `ledger`).
+   */
+  const verifyAndCreditSmsTransaction = async (
+    rawTxId: string,
+  ): Promise<{ txId: string; amount: number }> => {
+    if (!settings) {
+      throw new Error('አድሚኑ የቴሌብር ስልክ ቁጥሩን እስኪያስገባ ይጠብቁ።');
+    }
+
+    const txId = normalizeTxId(rawTxId);
+    const playerPhone = normalizePhone(registeredPhone || depositPhone);
+    const systemPhone = normalizePhone(settings.depositPhone);
+
+    if (!PHONE_REGEX.test(playerPhone)) {
+      throw new Error(
+        'እባክዎ ትክክለኛ የኢትዮጵያ ቴሌብር ስልክ ቁጥር ያስገቡ (09XXXXXXXX ወይም 07XXXXXXXX)።',
+      );
+    }
+    if (!TX_ID_REGEX.test(txId)) {
+      throw new Error('ትራንሳክሽን አይዲው ትክክል አይደለም (ከ6 እስከ 24 ፊደል ወይም ቁጥር ይሁን)።');
+    }
+
+    // Optional fallback probe to Express webhook memory cache when Firebase Admin REST sync is not configured
+    let serverSmsCheck: { found?: boolean; status?: string; amount?: number } | null = null;
+    try {
+      const resp = await fetch(`/api/telebirr-sms-webhook/check/${encodeURIComponent(txId)}`);
+      if (resp.ok) {
+        serverSmsCheck = (await resp.json()) as {
+          found?: boolean;
+          status?: string;
+          amount?: number;
+        };
+      }
+    } catch {
+      // Non-fatal if offline or Firestore-only
+    }
+
+    if (serverSmsCheck?.found && serverSmsCheck.status === 'used') {
+      throw new Error('ይህ የትራንዛክሽን ቁጥር ከዚህ በፊት ጥቅም ላይ ውሏል! (Status: Used)');
+    }
+
+    const smsRef = doc(db, 'received_sms_transactions', txId);
+    const usedTxRef = doc(db, 'usedTxIds', txId);
+    const depositRef = doc(db, 'deposits', txId);
+    const ledgerId = `led_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const ledgerRef = doc(db, 'ledger', ledgerId);
+    const userRef = doc(db, 'users', user.uid);
+    const privateRef = doc(db, 'users', user.uid, 'private', 'info');
+
+    const safeName = (wallet.displayName || user.displayName || 'ተጫዋች').slice(0, 80);
+    const effectivePhone = registeredPhone || playerPhone;
+
+    let verifiedAmount = 0;
+    let consumedFromServerWebhook = false;
+
+    try {
+      await runTransaction(db, async (transaction) => {
+        const [smsSnap, usedSnap, userSnap, privateSnap] = await Promise.all([
+          transaction.get(smsRef),
+          transaction.get(usedTxRef),
+          transaction.get(userRef),
+          transaction.get(privateRef),
+        ]);
+
+        if (!userSnap.exists()) {
+          throw new Error('የተጫዋች ቦርሳ አልተገኘም።');
+        }
+        if (usedSnap.exists()) {
+          throw new Error('ይህ ትራንሳክሽን አይዲ ቀደም ብሎ ጥቅም ላይ ውሏል! አዲስ ትራንሳክሽን አይዲ ያስገቡ።');
+        }
+
+        const currentWallet = userSnap.data() as UserWallet;
+        let hasFirestoreSms = false;
+
+        if (smsSnap.exists()) {
+          const smsData = smsSnap.data() as ReceivedSmsTransaction;
+          if (smsData.status !== 'unused') {
+            throw new Error('ይህ የትራንዛክሽን ቁጥር ከዚህ በፊት ጥቅም ላይ ውሏል! (Status: Used)');
+          }
+          const parsedAmt = Number(smsData.amount);
+          if (!Number.isFinite(parsedAmt) || parsedAmt < 100 || parsedAmt > 500000) {
+            throw new Error('በSMS የተመዘገበው የብር መጠን ከተፈቀደው ገደብ (100 - 500,000 ብር) ውጭ ነው።');
+          }
+          verifiedAmount = Number(parsedAmt.toFixed(2));
+          hasFirestoreSms = true;
+        } else if (
+          serverSmsCheck?.found &&
+          serverSmsCheck.status === 'unused' &&
+          typeof serverSmsCheck.amount === 'number'
+        ) {
+          const parsedSrvAmt = Number(serverSmsCheck.amount);
+          if (!Number.isFinite(parsedSrvAmt) || parsedSrvAmt < 100 || parsedSrvAmt > 500000) {
+            throw new Error('በቴሌብር ዌብሆክ የተመዘገበው የብር መጠን ከተፈቀደው ገደብ ውጭ ነው።');
+          }
+          verifiedAmount = Number(parsedSrvAmt.toFixed(2));
+          consumedFromServerWebhook = true;
+        } else {
+          throw new Error(
+            `ትራንዛክሽን ${txId} በ received_sms_transactions ውስጥ አልተገኘም። እባክዎ የቴሌብር SMS እስኪገባ ይጠብቁ ወይም ትክክለኛውን TX ID ያስገቡ።`,
+          );
+        }
+
+        if (hasFirestoreSms) {
+          transaction.update(smsRef, {
+            status: 'used',
+            used_by: user.uid,
+            used_at: serverTimestamp(),
+          });
+        }
+
+        transaction.set(usedTxRef, {
+          txId,
+          uid: user.uid,
+          amount: verifiedAmount,
+          createdAt: serverTimestamp(),
+        });
+
+        transaction.set(depositRef, {
+          id: txId,
+          uid: user.uid,
+          playerName: safeName,
+          playerPhone: effectivePhone,
+          systemPhone: PHONE_REGEX.test(systemPhone) ? systemPhone : settings.depositPhone,
+          txId,
+          amount: verifiedAmount,
+          status: 'verified',
+          verifiedMessage: 'ትክክል ነው — በቴሌብር SMS ዌብሆክ በራስ-ሰር ተረጋግጧል',
+          createdAt: serverTimestamp(),
+        });
+
+        transaction.set(ledgerRef, {
+          id: ledgerId,
+          uid: user.uid,
+          playerName: safeName,
+          playerPhone: effectivePhone,
+          type: 'income',
+          category: 'deposit',
+          amount: verifiedAmount,
+          referenceId: txId,
+          description: `በቴሌብር ዲፖሲት (${txId})`.slice(0, 180),
+          createdAt: serverTimestamp(),
+        });
+
+        if (!currentWallet.hasDeposited || !registeredPhone) {
+          if (privateSnap.exists()) {
+            const prevPriv = privateSnap.data() as { telebirrPhone?: string };
+            if (!prevPriv.telebirrPhone) {
+              transaction.update(privateRef, {
+                telebirrPhone: effectivePhone,
+                updatedAt: serverTimestamp(),
+              });
+            }
+          } else {
+            transaction.set(privateRef, {
+              uid: user.uid,
+              email: (user.email || 'user@example.com').slice(0, 150),
+              telebirrPhone: effectivePhone,
+              updatedAt: serverTimestamp(),
+            });
+          }
+        }
+
+        transaction.update(userRef, {
+          balance: Number((currentWallet.balance + verifiedAmount).toFixed(2)),
+          hasDeposited: true,
+          totalDeposited: Number((currentWallet.totalDeposited + verifiedAmount).toFixed(2)),
+          lastActionType: 'deposit',
+          lastActionRef: txId,
+          updatedAt: serverTimestamp(),
+        });
+      });
+
+      if (consumedFromServerWebhook) {
+        await fetch('/api/telebirr-sms-webhook/consume', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ txId, uid: user.uid }),
+        }).catch(() => undefined);
+      }
+    } catch (err) {
+      if (
+        err instanceof Error &&
+        (err.message.includes('ጥቅም ላይ ውሏል') ||
+          err.message.includes('አልተገኘም') ||
+          err.message.includes('ገደብ') ||
+          err.message.includes('ትክክለኛ'))
+      ) {
+        throw err;
+      }
+      handleFirestoreError(err, OperationType.WRITE, `received_sms_transactions/${txId}`);
+    }
+
+    return { txId, amount: verifiedAmount };
+  };
+
   const handleDepositSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!settings) {
       onNotify('አድሚኑ የቴሌብር ስልክ ቁጥሩን እስኪያስገባ ይጠብቁ።', 'error');
+      return;
+    }
+    if (smsLookupState.state === 'used') {
+      onNotify('ይህ የትራንዛክሽን ቁጥር ከዚህ በፊት ጥቅም ላይ ውሏል!', 'error');
       return;
     }
 
@@ -89,25 +390,18 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
     setDepositSuccessMsg(null);
 
     try {
-      // Brief system verification step for clear visual confirmation
-      await new Promise((resolve) => window.setTimeout(resolve, 900));
-      const result = await submitTelebirrDeposit({
-        user,
-        wallet,
-        settings,
-        rawPhone: registeredPhone || depositPhone,
-        rawTxId: txIdInput,
-        amount: parseFloat(depositAmount),
-        registeredPhone,
-      });
-
-      const okText = `ትክክል ነው! ${formatETB(result.amount)} (TX: ${result.txId}) ወደ ሂሳብዎ ገብቷል።`;
+      const result = await verifyAndCreditSmsTransaction(txIdInput);
+      const okText = `በቴሌብር SMS በራስ-ሰር ተረጋግጧል! ${formatETB(result.amount)} (TX: ${result.txId}) ወደ ዋሌትዎ ገብቷል።`;
       setDepositSuccessMsg(okText);
       setTxIdInput('');
       onNotify(okText, 'success');
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'ዲፖሲቱን ማረጋገጥ አልተቻለም።';
-      onNotify(msg, 'error');
+      const rawMsg = err instanceof Error ? err.message : '';
+      const displayMsg =
+        rawMsg && !rawMsg.startsWith('{')
+          ? rawMsg
+          : 'ዲፖሲቱን በፋየርስቶር ማረጋገጥ አልተቻለም። እባክዎ ዳግም ይሞክሩ።';
+      onNotify(displayMsg, 'error');
     } finally {
       setIsVerifyingDeposit(false);
     }
@@ -272,23 +566,23 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
 
               <div>
                 <label className="block text-xs font-bold text-slate-400 mb-1.5">
-                  ያስተላለፉት ብር መጠን (ዝቅተኛ 100 ብር)
+                  ከቴሌብር SMS የሚረጋገጥ የብር መጠን
                 </label>
-                <div className="relative">
-                  <input
-                    type="number"
-                    required
-                    min={100}
-                    max={500000}
-                    step={1}
-                    disabled={isVerifyingDeposit}
-                    value={depositAmount}
-                    onChange={(e) => setDepositAmount(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 focus:border-emerald-500 rounded-xl px-4 py-3 text-base font-mono-num text-white outline-none pr-12"
-                  />
-                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
-                    ብር
+                <div className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-base font-mono-num flex items-center justify-between">
+                  <span
+                    className={
+                      smsLookupState.state === 'unused'
+                        ? 'text-emerald-400 font-black'
+                        : smsLookupState.state === 'used'
+                          ? 'text-rose-400 font-bold'
+                          : 'text-slate-400'
+                    }
+                  >
+                    {typeof smsLookupState.amount === 'number'
+                      ? formatETB(smsLookupState.amount)
+                      : 'Transaction ID ሲያስገቡ በራስ-ሰር ይሞላል'}
                   </span>
+                  <span className="text-[11px] font-bold text-slate-400">Auto-SMS</span>
                 </div>
               </div>
             </div>
@@ -305,21 +599,71 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
                 disabled={isVerifyingDeposit}
                 value={txIdInput}
                 onChange={(e) => setTxIdInput(e.target.value.toUpperCase())}
-                placeholder="ምሳሌ: CL84X92K1M"
+                placeholder="ምሳሌ: BIE4567890"
                 className="w-full bg-slate-950 border border-slate-700 focus:border-emerald-500 rounded-xl px-4 py-3 text-base font-mono-num uppercase text-white outline-none"
               />
+
+              {/* Real-Time `received_sms_transactions` Auto-Verification Status */}
+              {smsLookupState.state !== 'idle' && (
+                <div
+                  className={`mt-2 rounded-xl border px-3.5 py-2.5 text-xs flex items-center gap-2 ${
+                    smsLookupState.state === 'unused'
+                      ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300 font-bold'
+                      : smsLookupState.state === 'used'
+                        ? 'bg-rose-500/15 border-rose-500/40 text-rose-300 font-bold'
+                        : 'bg-slate-950 border-slate-800 text-slate-300'
+                  }`}
+                >
+                  {smsLookupState.state === 'unused' && (
+                    <>
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <span>
+                        በራስ-ሰር ተገኝቷል ({smsLookupState.sourceLabel}) ·{' '}
+                        <strong className="font-mono-num text-white">
+                          {formatETB(smsLookupState.amount || 0)}
+                        </strong>{' '}
+                        (Unused — ለመጨመር ዝግጁ)
+                      </span>
+                    </>
+                  )}
+                  {smsLookupState.state === 'used' && (
+                    <>
+                      <XCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                      <span>
+                        ይህ የትራንዛክሽን ቁጥር ከዚህ በፊት ጥቅም ላይ ውሏል! (Status: Used)
+                      </span>
+                    </>
+                  )}
+                  {smsLookupState.state === 'checking' && (
+                    <>
+                      <Clock className="w-4 h-4 text-amber-400 shrink-0 animate-spin" />
+                      <span>በፋየርስቶር received_sms_transactions ላይ በመፈለግ ላይ...</span>
+                    </>
+                  )}
+                  {smsLookupState.state === 'not_found' && (
+                    <>
+                      <MessageSquareText className="w-4 h-4 text-slate-400 shrink-0" />
+                      <span>
+                        በ received_sms_transactions ውስጥ ገና አልተገኘም — የቴሌብር SMS እስኪደርስ ጥቂት ሰከንዶች ይጠብቁ ወይም ቁልፉን ተጭነው ይሞክሩ።
+                      </span>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
 
             <button
               type="submit"
-              disabled={isVerifyingDeposit || !settings}
+              disabled={isVerifyingDeposit || !settings || smsLookupState.state === 'used'}
               className="w-full py-3.5 px-6 rounded-2xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-60 text-slate-950 font-black text-base flex items-center justify-center gap-2 transition cursor-pointer"
             >
               <ShieldCheck className="w-5 h-5" />
               <span>
                 {isVerifyingDeposit
-                  ? 'ሲስተሙ የቴሌብር መተላለፍን እያረጋገጠ ነው...'
-                  : 'አረጋግጥና ብሩን ዲፖሲት አድርግ'}
+                  ? 'በፋየርስቶር ትራንዛክሽን እያረጋገጠ ነው...'
+                  : smsLookupState.state === 'unused'
+                    ? `በSMS አረጋግጥና ${formatETB(smsLookupState.amount || 0)} ጨምር`
+                    : 'በ received_sms_transactions አረጋግጥና ጨምር'}
               </span>
             </button>
           </form>

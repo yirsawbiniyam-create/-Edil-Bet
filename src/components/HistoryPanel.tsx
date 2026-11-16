@@ -1,10 +1,22 @@
 import React, { useMemo, useState } from 'react';
-import { BarChart3, History, TrendingDown, TrendingUp } from 'lucide-react';
+import {
+  Banknote,
+  BarChart3,
+  CheckCircle2,
+  Clock,
+  History,
+  Radio,
+  Ticket,
+  TrendingDown,
+  TrendingUp,
+  XCircle,
+} from 'lucide-react';
 import { formatETB } from '../lib/gameEngine';
-import { BetRecord } from '../types';
+import { BetRecord, FootballTicket } from '../types';
 
 interface HistoryPanelProps {
   bets: BetRecord[];
+  tickets?: FootballTicket[];
 }
 
 type ChartMode = 'trend' | 'byGame';
@@ -36,10 +48,27 @@ function getGameGroup(gameType: BetRecord['gameType']): { key: string; label: st
   return { key: 'dice', label: 'የዳይስ ጨዋታ' };
 }
 
-export const HistoryPanel: React.FC<HistoryPanelProps> = ({ bets }) => {
+export const HistoryPanel: React.FC<HistoryPanelProps> = ({ bets, tickets = [] }) => {
   const [filter, setFilter] = useState<'all' | 'wins' | 'losses'>('all');
+  const [ticketFilter, setTicketFilter] = useState<'all' | 'live' | 'settled'>('all');
   const [chartMode, setChartMode] = useState<ChartMode>('trend');
   const [hoveredPointIdx, setHoveredPointIdx] = useState<number | null>(null);
+
+  const sortedTickets = useMemo(() => {
+    const list = [...tickets].sort((a, b) => {
+      if (a.status === 'live' && b.status !== 'live') return -1;
+      if (b.status === 'live' && a.status !== 'live') return 1;
+      return (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0);
+    });
+    if (ticketFilter === 'live') return list.filter((t) => t.status === 'live');
+    if (ticketFilter === 'settled') return list.filter((t) => t.status !== 'live');
+    return list;
+  }, [tickets, ticketFilter]);
+
+  const liveTicketsCount = useMemo(
+    () => tickets.filter((t) => t.status === 'live').length,
+    [tickets],
+  );
 
   const stats = useMemo(() => {
     let totalWagered = 0;
@@ -196,6 +225,269 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({ bets }) => {
 
   return (
     <div className="space-y-6">
+      {/* Football Tickets & Live Progress Section */}
+      <section className="bg-slate-900/95 border border-slate-800 rounded-3xl p-5 sm:p-8 space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-slate-800 flex items-center justify-center text-emerald-400 shrink-0">
+              <Ticket className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-lg sm:text-xl font-extrabold text-white">
+                  የእግር ኳስ ትኬቶች እና ቀጥታ ሂደት (Football Tickets)
+                </h2>
+                {liveTicketsCount > 0 && (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-xs font-extrabold font-mono-num">
+                    <Radio className="w-3.5 h-3.5 animate-pulse" />
+                    <span>{liveTicketsCount} ተጀምረዋል · LIVE</span>
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-slate-400">
+                የተጀመሩ ጨዋታዎችን የደቂቃ ሂደት (0&apos;-90&apos;) እና የትኬት ሁኔታ በቀጥታ ይከታተሉ
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1 p-1 bg-slate-950 rounded-xl border border-slate-800">
+            {(
+              [
+                ['all', `ሁሉም (${tickets.length})`],
+                ['live', `ተጀምረዋል (${liveTicketsCount})`],
+                ['settled', `የተጠናቀቁ (${Math.max(0, tickets.length - liveTicketsCount)})`],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setTicketFilter(key)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer whitespace-nowrap ${
+                  ticketFilter === key
+                    ? 'bg-emerald-500 text-slate-950'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {sortedTickets.length === 0 ? (
+          <div className="bg-slate-950/60 border border-slate-800 rounded-2xl py-8 px-4 text-center text-sm text-slate-400">
+            {tickets.length === 0
+              ? 'እስካሁን የቆመሩት የእግር ኳስ ትኬት የለም። በእግር ኳስ ቤቲንግ ትር ውስጥ ትኬት ሲያስገቡ የጨዋታ ሂደቱ እዚህ ይታያል።'
+              : 'በዚህ ምድብ ውስጥ ትኬት የለም።'}
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {sortedTickets.map((ticket) => {
+              const rawMinute = Math.max(0, Math.min(90, Math.round(ticket.currentMinute || 0)));
+              const isLive = ticket.status === 'live';
+              const isCashedOut = ticket.status === 'cashed_out';
+              const isWon = ticket.status === 'won';
+              const hasStarted = isLive || isCashedOut || isWon || ticket.status === 'lost' || rawMinute > 0;
+              const progressPct =
+                isWon || ticket.status === 'lost'
+                  ? 100
+                  : Math.min(100, Math.max(hasStarted ? 4 : 0, Math.round((rawMinute / 90) * 100)));
+
+              const hitCount = ticket.picks.filter((p) => p.hit).length;
+              const halfLabel =
+                rawMinute === 0 && isLive
+                  ? 'ጨዋታው ተጀምሯል (0\')'
+                  : rawMinute < 45 && isLive
+                  ? `1ኛ አጋማሽ · ${rawMinute}'`
+                  : rawMinute === 45 && isLive
+                  ? 'እረፍት (HT 45\')'
+                  : rawMinute < 90 && isLive
+                  ? `2ኛ አጋማሽ · ${rawMinute}'`
+                  : isCashedOut
+                  ? `Cashout @ ${rawMinute}'`
+                  : 'ተጠናቋል (90\' FT)';
+
+              const barFillClass = isLive
+                ? 'bg-gradient-to-r from-emerald-500 to-lime-400'
+                : isCashedOut
+                ? 'bg-amber-400'
+                : isWon
+                ? 'bg-emerald-500'
+                : 'bg-rose-500';
+
+              const statusBadge = isLive ? (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-xs font-extrabold">
+                  <Radio className="w-3.5 h-3.5 animate-pulse shrink-0" />
+                  <span>ተጀምሯል · LIVE {rawMinute}&apos;</span>
+                </span>
+              ) : isCashedOut ? (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-300 text-xs font-extrabold">
+                  <Banknote className="w-3.5 h-3.5 shrink-0" />
+                  <span>Cashout @{rawMinute}&apos;</span>
+                </span>
+              ) : isWon ? (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-xs font-extrabold">
+                  <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                  <span>አሸንፏል · Won 90&apos; FT</span>
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-rose-500/15 border border-rose-500/40 text-rose-300 text-xs font-extrabold">
+                  <XCircle className="w-3.5 h-3.5 shrink-0" />
+                  <span>ተሸንፏል · Lost 90&apos; FT</span>
+                </span>
+              );
+
+              return (
+                <article
+                  key={ticket.id}
+                  className={`rounded-2xl border p-4 sm:p-5 space-y-4 transition ${
+                    isLive
+                      ? 'bg-slate-950/90 border-emerald-500/35'
+                      : 'bg-slate-950/70 border-slate-800'
+                  }`}
+                >
+                  {/* Ticket Header */}
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      {statusBadge}
+                      <span className="text-xs font-mono-num text-slate-400">
+                        #{ticket.id.slice(0, 8).toUpperCase()}
+                      </span>
+                      <span className="text-xs text-slate-400 font-mono-num">
+                        · {ticket.picksCount} ጨዋታ ({hitCount}/{ticket.picks.length} ተሳክቷል)
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-4 text-xs">
+                      <div>
+                        <span className="text-slate-400">መደብ: </span>
+                        <strong className="font-mono-num text-white">{formatETB(ticket.betAmount)}</strong>
+                      </div>
+                      <div>
+                        <span className="text-slate-400">ኦድ: </span>
+                        <strong className="font-mono-num text-amber-400">{ticket.totalOdds.toFixed(2)}x</strong>
+                      </div>
+                      <div>
+                        <span className="text-slate-400">
+                          {isLive ? 'ሊያገኙት የሚችሉት: ' : 'ክፍያ: '}
+                        </span>
+                        <strong
+                          className={`font-mono-num ${
+                            isWon || isCashedOut
+                              ? 'text-emerald-400'
+                              : isLive
+                              ? 'text-amber-300'
+                              : 'text-rose-400'
+                          }`}
+                        >
+                          {isLive
+                            ? formatETB(ticket.potentialPayout)
+                            : isWon || isCashedOut
+                            ? `+${formatETB(ticket.payout)}`
+                            : `-${formatETB(ticket.betAmount)}`}
+                        </strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Match Visual Progress Bar (0' -> HT 45' -> 90' FT) */}
+                  <div className="bg-slate-900/90 border border-slate-800/90 rounded-xl p-3 space-y-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                      <span className="inline-flex items-center gap-1.5 font-bold text-slate-200">
+                        <Clock className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                        <span>{halfLabel}</span>
+                      </span>
+                      <div className="flex items-center gap-3 font-mono-num">
+                        {isLive && ticket.cashoutEligible && ticket.cashoutOffer > 0 && (
+                          <span className="text-amber-300 font-bold">
+                            Cashout Offer: {formatETB(ticket.cashoutOffer)}
+                          </span>
+                        )}
+                        <span className="font-extrabold text-white">
+                          {isWon || ticket.status === 'lost' ? '90\' / 90\'' : `${rawMinute}' / 90'`} ({progressPct}%)
+                        </span>
+                      </div>
+                    </div>
+
+                    <div
+                      role="progressbar"
+                      aria-valuemin={0}
+                      aria-valuemax={90}
+                      aria-valuenow={isWon || ticket.status === 'lost' ? 90 : rawMinute}
+                      aria-label={`የጨዋታ ሂደት ${rawMinute} ከ 90 ደቂቃ`}
+                      className="relative h-2.5 w-full bg-slate-950 rounded-full overflow-hidden border border-slate-800"
+                    >
+                      {/* Halftime 50% marker */}
+                      <span
+                        aria-hidden="true"
+                        className="absolute left-1/2 top-0 bottom-0 w-px bg-slate-700 z-10"
+                      />
+                      <div
+                        className={`h-full rounded-full transition-all duration-500 ${barFillClass} ${
+                          isLive ? 'animate-pulse' : ''
+                        }`}
+                        style={{ width: `${progressPct}%` }}
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-between text-[10px] font-mono-num font-bold text-slate-500">
+                      <span>0&apos; Kick-off</span>
+                      <span>45&apos; HT</span>
+                      <span>90&apos; FT</span>
+                    </div>
+                  </div>
+
+                  {/* Ticket Picks Breakdown */}
+                  <div className="grid sm:grid-cols-2 gap-2">
+                    {ticket.picks.map((pick, idx) => (
+                      <div
+                        key={`${ticket.id}-${pick.matchId}-${idx}`}
+                        className="flex items-center justify-between gap-2 bg-slate-900/70 border border-slate-800/80 rounded-xl px-3 py-2 text-xs"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5 font-bold text-slate-100 truncate">
+                            {pick.hit ? (
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                            ) : isLive ? (
+                              <Clock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                            ) : (
+                              <XCircle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                            )}
+                            <span className="truncate">
+                              {pick.home} vs {pick.away}
+                            </span>
+                          </div>
+                          <div className="text-[11px] text-slate-400 pl-5 truncate">
+                            {pick.marketLabel || pick.market} ·{' '}
+                            <span className="font-mono-num text-amber-300 font-bold">
+                              @{pick.odd.toFixed(2)}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="shrink-0 text-right font-mono-num">
+                          <span
+                            className={`inline-block px-2 py-0.5 rounded bg-slate-950 border text-[11px] font-black ${
+                              pick.hit
+                                ? 'border-emerald-500/40 text-emerald-300'
+                                : isLive
+                                ? 'border-slate-700 text-slate-200'
+                                : 'border-rose-500/40 text-rose-300'
+                            }`}
+                          >
+                            {pick.homeCode} {pick.homeGoals}-{pick.awayGoals} {pick.awayCode}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
       {/* Performance Analytics & Charts Section */}
       <section className="bg-slate-900/95 border border-slate-800 rounded-3xl p-5 sm:p-8 space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4">

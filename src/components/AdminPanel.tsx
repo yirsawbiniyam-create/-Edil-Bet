@@ -4,11 +4,14 @@ import {
   ArrowUpRight,
   CheckCircle2,
   Clock,
+  Copy,
   ImagePlus,
   KeyRound,
+  MessageSquareText,
   Phone,
   RotateCcw,
   Save,
+  Send,
   ShieldCheck,
   SlidersHorizontal,
   Trash2,
@@ -16,6 +19,7 @@ import {
 import { DEFAULT_GAME_CONFIG, formatETB, GameConfigValues } from '../lib/gameEngine';
 import {
   adminCompleteWithdrawalWithPin,
+  adminRecordSimulatedTelebirrSms,
   adminRejectAndRefundWithdrawal,
   adminSaveGameConfig,
   adminSaveGameLogo,
@@ -142,6 +146,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   // Activity Log Views
   const [logView, setLogView] = useState<'ledger' | 'deposits' | 'withdrawals'>('ledger');
   const [ledgerFilter, setLedgerFilter] = useState<'all' | 'income' | 'expense'>('all');
+
+  // Telebirr MacroDroid SMS Gateway Test State
+  const [simSmsText, setSimSmsText] = useState(
+    'You have received ETB 500.00 from 0911223344. Your transaction number is TB84X92K1M.',
+  );
+  const [sendingSimSms, setSendingSimSms] = useState(false);
 
   useEffect(() => {
     if (settings) {
@@ -379,6 +389,46 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     }
   };
 
+  const webhookEndpointUrl =
+    typeof window !== 'undefined'
+      ? `${window.location.origin}/api/telebirr-sms-webhook`
+      : '/api/telebirr-sms-webhook';
+
+  const handleSimulateWebhookSms = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSendingSimSms(true);
+    try {
+      const firestoreRes = await adminRecordSimulatedTelebirrSms({
+        rawMessage: simSmsText,
+      });
+      await fetch('/api/telebirr-sms-webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          secret_key: 'yene_betting_secret_key_123',
+          message: simSmsText,
+          source: 'admin_sim',
+        }),
+      }).catch(() => undefined);
+
+      onNotify(
+        `የቴሌብር SMS (TX: ${firestoreRes.transactionId} · ${formatETB(firestoreRes.amount)}) በFirestore received_sms_transactions ላይ ተመዝግቧል!`,
+        'success',
+      );
+      const randSuffix = Math.random().toString(36).slice(2, 8).toUpperCase();
+      setSimSmsText(
+        `You have received ETB 500.00 from 0911223344. Your transaction number is TB${randSuffix}.`,
+      );
+    } catch (err) {
+      onNotify(
+        err instanceof Error ? err.message : 'የቴሌብር SMS መመዝገብ አልተቻለም።',
+        'error',
+      );
+    } finally {
+      setSendingSimSms(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {onOpenAccountSettings && (
@@ -587,6 +637,70 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </div>
           </div>
         </form>
+
+        {/* Telebirr SMS Gateway / MacroDroid Webhook Setup & Test Simulator */}
+        <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-4 sm:p-5 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5">
+              <MessageSquareText className="w-5 h-5 text-emerald-400 shrink-0" />
+              <div>
+                <h3 className="text-sm font-extrabold text-white">
+                  የቴሌብር አውቶማቲክ SMS Gateway (MacroDroid Webhook)
+                </h3>
+                <p className="text-xs text-slate-400">
+                  ከቴሌብር (127) የሚመጡ SMS ዎችን በMacroDroid POST Webhook ወደ `received_sms_transactions` ይላኩ
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                navigator.clipboard
+                  ?.writeText(webhookEndpointUrl)
+                  .then(() => onNotify('Webhook URL ኮፒ ተደርጓል!', 'success'))
+                  .catch(() => onNotify(webhookEndpointUrl, 'info'));
+              }}
+              className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-bold text-emerald-300 flex items-center gap-1.5 cursor-pointer"
+            >
+              <Copy className="w-3.5 h-3.5" />
+              <span>Webhook URL ቅዳ</span>
+            </button>
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-3 text-xs">
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 space-y-1">
+              <span className="text-slate-400 font-bold block">POST Webhook Endpoint</span>
+              <code className="font-mono-num text-emerald-300 break-all block">
+                {webhookEndpointUrl}
+              </code>
+            </div>
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 space-y-1">
+              <span className="text-slate-400 font-bold block">MacroDroid JSON Body Format</span>
+              <code className="font-mono-num text-amber-300 break-all block">
+                {'{"secret_key":"yene_betting_secret_key_123","message":"{sms_text}"}'}
+              </code>
+            </div>
+          </div>
+
+          <form onSubmit={handleSimulateWebhookSms} className="flex flex-col sm:flex-row gap-2.5">
+            <input
+              type="text"
+              required
+              value={simSmsText}
+              onChange={(e) => setSimSmsText(e.target.value)}
+              placeholder="You have received ETB 500.00 ... transaction number is TB..."
+              className="flex-1 bg-slate-900 border border-slate-700 focus:border-emerald-500 rounded-xl px-3.5 py-2.5 text-xs font-mono-num text-white outline-none"
+            />
+            <button
+              type="submit"
+              disabled={sendingSimSms}
+              className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-slate-950 font-extrabold text-xs flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
+            >
+              <Send className="w-3.5 h-3.5" />
+              <span>{sendingSimSms ? 'በመመዝገብ ላይ...' : 'የሙከራ SMS ላክ'}</span>
+            </button>
+          </form>
+        </div>
       </section>
 
       {/* 2B. Admin Game Odds & Table Limits Configuration */}
