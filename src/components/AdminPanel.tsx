@@ -20,6 +20,7 @@ import {
 import { DEFAULT_GAME_CONFIG, formatETB, GameConfigValues } from '../lib/gameEngine';
 import {
   adminApprovePendingDeposit,
+  adminApproveWithdrawal,
   adminCompleteWithdrawalWithPin,
   adminRecordManualTelebirrTx,
   adminRecordSimulatedTelebirrSms,
@@ -29,6 +30,7 @@ import {
   adminSaveGameLogo,
   adminSaveTelebirrSettings,
   adminSyncWebhookSmsBatch,
+  DEFAULT_TELEBIRR_PHONE,
   runSystemWithdrawalVerification,
 } from '../lib/firestoreService';
 import {
@@ -105,9 +107,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   onNotify,
   onOpenAccountSettings,
 }) => {
-  const [depositPhoneInput, setDepositPhoneInput] = useState(settings?.depositPhone || '');
+  const [depositPhoneInput, setDepositPhoneInput] = useState(
+    settings?.depositPhone || DEFAULT_TELEBIRR_PHONE,
+  );
   const [withdrawalPhoneInput, setWithdrawalPhoneInput] = useState(
-    settings?.withdrawalPhone || settings?.depositPhone || '',
+    settings?.withdrawalPhone || settings?.depositPhone || DEFAULT_TELEBIRR_PHONE,
   );
   const [accountNameInput, setAccountNameInput] = useState(
     settings?.accountName || 'እድል ቤት · Edil Bet',
@@ -241,7 +245,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   }, [withdrawals]);
 
   const completedWithdrawals = useMemo(
-    () => withdrawals.filter((w) => w.status === 'completed'),
+    () => withdrawals.filter((w) => w.status === 'paid' || w.status === 'completed'),
     [withdrawals],
   );
 
@@ -388,6 +392,27 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       );
     } finally {
       setSavingGameConfig(false);
+    }
+  };
+
+  const handleApproveWithdrawal = async (withdrawal: WithdrawalRecord) => {
+    setProcessingId(withdrawal.id);
+    try {
+      await adminApproveWithdrawal({
+        withdrawal,
+        adminUid,
+      });
+      onNotify(
+        `የ${withdrawal.playerName} (${formatETB(withdrawal.amount)}) ዊዝድሮው Approve ተደርጎ ወደ 'paid' ተቀይሯል — በLedger ላይ ተመዝግቧል!`,
+        'success',
+      );
+      if (selectedWithdrawalId === withdrawal.id) {
+        setSelectedWithdrawalId(null);
+      }
+    } catch (err) {
+      onNotify(err instanceof Error ? err.message : 'ዊዝድሮውን Approve ማድረግ አልተቻለም።', 'error');
+    } finally {
+      setProcessingId(null);
     }
   };
 
@@ -685,7 +710,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               required
               value={depositPhoneInput}
               onChange={(e) => setDepositPhoneInput(e.target.value)}
-              placeholder="0911223344"
+              placeholder="0927145171"
               className="w-full bg-slate-950 border border-slate-700 focus:border-emerald-500 rounded-xl px-4 py-2.5 text-base font-mono-num text-white outline-none"
             />
           </div>
@@ -699,7 +724,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               required
               value={withdrawalPhoneInput}
               onChange={(e) => setWithdrawalPhoneInput(e.target.value)}
-              placeholder="0911223344"
+              placeholder="0927145171"
               className="w-full bg-slate-950 border border-slate-700 focus:border-amber-500 rounded-xl px-4 py-2.5 text-base font-mono-num text-white outline-none"
             />
           </div>
@@ -1311,29 +1336,40 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2 shrink-0">
+                    <div className="flex flex-wrap items-center gap-2 shrink-0">
                       {!w.systemVerified && (
                         <button
                           type="button"
+                          disabled={isProcessing}
                           onClick={() => handleManualVerify(w.id)}
-                          className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-emerald-400 transition cursor-pointer"
+                          className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-xs font-bold text-emerald-400 transition cursor-pointer whitespace-nowrap"
                         >
                           ትክክለኛነት አረጋግጥ
                         </button>
                       )}
                       <button
                         type="button"
+                        disabled={isProcessing}
+                        onClick={() => handleApproveWithdrawal(w)}
+                        className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 text-xs font-black flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap"
+                      >
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span>{isProcessing ? 'በማጽደቅ ላይ...' : 'Approve · አጽድቅ (Paid)'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isProcessing}
                         onClick={() => {
                           setSelectedWithdrawalId(isSelected ? null : w.id);
                           setTelebirrPin('');
                         }}
-                        className={`px-4 py-2 rounded-xl text-xs font-extrabold transition cursor-pointer whitespace-nowrap ${
+                        className={`px-3.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer whitespace-nowrap ${
                           isSelected
                             ? 'bg-slate-800 text-slate-300'
-                            : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950'
+                            : 'bg-slate-900 hover:bg-slate-800 border border-slate-700 text-amber-300'
                         }`}
                       >
-                        {isSelected ? 'ዝጋ' : 'ክሊክ አድርገህ ክፈል'}
+                        {isSelected ? 'ዝጋ' : 'በPIN / መልስ'}
                       </button>
                     </div>
                   </div>
@@ -1610,8 +1646,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         {w.status === 'pending' && (
                           <span className="text-amber-400">ፔንዲንግ</span>
                         )}
-                        {w.status === 'completed' && (
-                          <span className="text-emerald-400">ተከፍሏል</span>
+                        {(w.status === 'paid' || w.status === 'completed') && (
+                          <span className="text-emerald-400">ተከፍሏል (Paid)</span>
                         )}
                         {w.status === 'rejected' && (
                           <span className="text-rose-400">ተመልሷል</span>

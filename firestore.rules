@@ -257,7 +257,7 @@ service cloud.firestore {
         && isValidPhone(data.playerPhone)
         && isValidPhone(data.sourceSystemPhone)
         && data.amount is number && data.amount >= 500 && data.amount <= 500000
-        && data.status in ['pending', 'completed', 'rejected']
+        && data.status in ['pending', 'paid', 'completed', 'rejected']
         && data.systemVerified is bool
         && data.systemVerifiedText is string && data.systemVerifiedText.size() >= 2 && data.systemVerifiedText.size() <= 120
         && data.adminPinConfirmed is bool
@@ -808,11 +808,10 @@ service cloud.firestore {
     match /deposits/{depositId} {
       allow get: if isValidTxId(depositId) && (
         isAdmin() ||
-        (resource != null && (
-          isOwner(resource.data.uid) ||
-          isRecoveredSessionFor(resource.data.uid) ||
-          isPhoneOwnerEmail(resource.data.playerPhone)
-        ))
+        resource == null ||
+        isOwner(resource.data.uid) ||
+        isRecoveredSessionFor(resource.data.uid) ||
+        isPhoneOwnerEmail(resource.data.playerPhone)
       );
       allow list: if isAdmin() || (
         isVerifiedUser() && (
@@ -854,11 +853,10 @@ service cloud.firestore {
     match /withdrawals/{withdrawalId} {
       allow get: if isValidId(withdrawalId) && (
         isAdmin() ||
-        (resource != null && (
-          isOwner(resource.data.uid) ||
-          isRecoveredSessionFor(resource.data.uid) ||
-          isPhoneOwnerEmail(resource.data.playerPhone)
-        ))
+        resource == null ||
+        isOwner(resource.data.uid) ||
+        isRecoveredSessionFor(resource.data.uid) ||
+        isPhoneOwnerEmail(resource.data.playerPhone)
       );
       allow list: if isAdmin() || (
         isVerifiedUser() && (
@@ -902,14 +900,22 @@ service cloud.firestore {
             && incoming().adminPinConfirmed == false
             && incoming().diff(existing()).affectedKeys().hasOnly(['systemVerified', 'systemVerifiedText', 'updatedAt'])
           ) ||
-          // Action 2: Admin enters Telebirr Secret PIN and completes payout
+          // Action 2: Admin approves pending withdrawal to 'paid' (or 'completed' with Telebirr PIN) and logs to ledger
           (
             isAdmin()
-            && existing().systemVerified == true
-            && incoming().status == 'completed'
-            && incoming().adminPinConfirmed == true
             && incoming().processedBy == request.auth.uid
-            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'adminPinConfirmed', 'processedBy', 'updatedAt'])
+            && (
+              (
+                incoming().status == 'paid'
+                && incoming().systemVerified == true
+                && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'systemVerified', 'systemVerifiedText', 'adminPinConfirmed', 'processedBy', 'updatedAt'])
+              ) || (
+                existing().systemVerified == true
+                && incoming().status in ['paid', 'completed']
+                && incoming().adminPinConfirmed == true
+                && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'adminPinConfirmed', 'processedBy', 'updatedAt'])
+              )
+            )
           ) ||
           // Action 3: Admin rejects pending withdrawal
           (

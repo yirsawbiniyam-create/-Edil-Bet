@@ -405,7 +405,7 @@
         },
         "status": {
           "type": "string",
-          "enum": ["pending", "completed", "rejected"]
+          "enum": ["pending", "paid", "completed", "rejected"]
         },
         "systemVerified": {
           "type": "boolean"

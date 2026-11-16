@@ -306,7 +306,7 @@ export interface WithdrawalRecord {
   playerPhone: string;
   sourceSystemPhone: string;
   amount: number;
-  status: 'pending' | 'completed' | 'rejected';
+  status: 'pending' | 'paid' | 'completed' | 'rejected';
   systemVerified: boolean;
   systemVerifiedText: string;
   adminPinConfirmed: boolean;

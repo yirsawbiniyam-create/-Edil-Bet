@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { User } from 'firebase/auth';
-import { doc, onSnapshot, runTransaction, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot, runTransaction, serverTimestamp } from 'firebase/firestore';
 import {
   ArrowDownCircle,
   ArrowUpCircle,
@@ -17,6 +17,7 @@ import {
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { formatETB } from '../lib/gameEngine';
 import {
+  DEFAULT_TELEBIRR_PHONE,
   normalizePhone,
   normalizeTxId,
   PHONE_REGEX,
@@ -238,8 +239,12 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
     const userRef = doc(db, 'users', user.uid);
     const privateRef = doc(db, 'users', user.uid, 'private', 'info');
 
-    const safeName = (wallet.displayName || user.displayName || 'ተጫዋች').slice(0, 80);
+    const safeName = (wallet.displayName || user.displayName || 'ተጫዋች').trim().slice(0, 80) || 'ተጫዋች';
     const effectivePhone = registeredPhone || playerPhone;
+    const validSystemPhone =
+      systemPhone !== '0911000000' && PHONE_REGEX.test(systemPhone)
+        ? systemPhone
+        : DEFAULT_TELEBIRR_PHONE;
 
     let verifiedAmount = 0;
     let consumedFromServerWebhook = false;
@@ -311,7 +316,7 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
           uid: user.uid,
           playerName: safeName,
           playerPhone: effectivePhone,
-          systemPhone: PHONE_REGEX.test(systemPhone) ? systemPhone : settings.depositPhone,
+          systemPhone: validSystemPhone,
           txId,
           amount: verifiedAmount,
           status: 'verified',
@@ -378,6 +383,11 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
       ) {
         throw err;
       }
+      const errCode = (err as { code?: string })?.code || '';
+      const errMsg = err instanceof Error ? err.message : '';
+      if (errCode === 'permission-denied' || errMsg.includes('permission-denied')) {
+        throw new Error('ይህ ትራንሳክሽን አይዲ ቀደም ብሎ ጥቅም ላይ ውሏል! አዲስ ትራንሳክሽን አይዲ ያስገቡ።');
+      }
       handleFirestoreError(err, OperationType.WRITE, `received_sms_transactions/${txId}`);
     }
 
@@ -404,6 +414,18 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
 
     try {
       const cleanTx = normalizeTxId(txIdInput);
+      const playerPhone = normalizePhone(registeredPhone || depositPhone);
+
+      if (!PHONE_REGEX.test(playerPhone)) {
+        throw new Error(
+          'እባክዎ ትክክለኛ የኢትዮጵያ ቴሌብር ስልክ ቁጥር ያስገቡ (09XXXXXXXX ወይም 07XXXXXXXX)።',
+        );
+      }
+      if (!TX_ID_REGEX.test(cleanTx)) {
+        throw new Error(
+          'ትራንሳክሽን አይዲው ትክክል አይደለም (ከ6 እስከ 24 ፊደል ወይም ቁጥር ይሁን — ወይም ሙሉ የቴሌብር SMS ፔስት ያድርጉ)።',
+        );
+      }
 
       // 1) Try Backend API Route (`POST /api/verify-deposit`) first
       type VerifyDepositApiResponse = {
@@ -445,35 +467,54 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
         return;
       }
 
-      // 2) If SMS record is present (Firestore or Express Webhook), execute instant atomic credit
-      if (smsLookupState.state === 'unused') {
-        const result = await verifyAndCreditSmsTransaction(txIdInput);
-        const okText = `በተሳካ ሁኔታ ${formatETB(result.amount)} (TX: ${result.txId}) ወደ ዋሌትዎ ገብቷል!`;
-        setDepositFeedback({ type: 'success', text: okText });
-        setTxIdInput('');
-        onNotify(okText, 'success');
-        return;
-      }
-
-      // 3) Check once more in case SMS just arrived before falling back to Pending Admin verification
-      try {
-        const result = await verifyAndCreditSmsTransaction(txIdInput);
-        const okText = `በተሳካ ሁኔታ ${formatETB(result.amount)} (TX: ${result.txId}) ወደ ዋሌትዎ ገብቷል!`;
-        setDepositFeedback({ type: 'success', text: okText });
-        setTxIdInput('');
-        onNotify(okText, 'success');
-        return;
-      } catch (smsErr) {
-        const smsMsg = smsErr instanceof Error ? smsErr.message : '';
-        const notFoundYet =
-          smsMsg.includes('አልተገኘም') || smsMsg.includes('received_sms_transactions');
-        if (!notFoundYet) {
-          throw smsErr;
+      // 2) Check whether an unused SMS record exists in Firestore or Express Webhook before deciding Auto-Credit vs Pending Admin Approval
+      let hasUnusedSms = smsLookupState.state === 'unused';
+      if (!hasUnusedSms) {
+        try {
+          const smsDocSnap = await getDoc(doc(db, 'received_sms_transactions', cleanTx));
+          if (smsDocSnap.exists()) {
+            const smsData = smsDocSnap.data() as ReceivedSmsTransaction;
+            if (smsData.status !== 'unused') {
+              throw new Error('ይህ የትራንዛክሽን ቁጥር ከዚህ በፊት ጥቅም ላይ ውሏል! (Status: Used)');
+            }
+            hasUnusedSms = true;
+          }
+        } catch (checkErr) {
+          if (checkErr instanceof Error && checkErr.message.includes('ጥቅም ላይ ውሏል')) {
+            throw checkErr;
+          }
         }
       }
 
-      // 4) Fallback when admin's personal phone SMS isn't synced to Webhook yet:
-      // Submit `pending` deposit request so admin can approve 1-click from their Admin panel
+      if (!hasUnusedSms) {
+        try {
+          const whResp = await fetch(`/api/telebirr-sms-webhook/check/${encodeURIComponent(cleanTx)}`);
+          if (whResp.ok) {
+            const wh = (await whResp.json()) as { found?: boolean; status?: string };
+            if (wh.found && wh.status === 'used') {
+              throw new Error('ይህ የትራንዛክሽን ቁጥር ከዚህ በፊት ጥቅም ላይ ውሏል! (Status: Used)');
+            }
+            if (wh.found && wh.status === 'unused') {
+              hasUnusedSms = true;
+            }
+          }
+        } catch (whErr) {
+          if (whErr instanceof Error && whErr.message.includes('ጥቅም ላይ ውሏል')) {
+            throw whErr;
+          }
+        }
+      }
+
+      if (hasUnusedSms) {
+        const result = await verifyAndCreditSmsTransaction(cleanTx);
+        const okText = `በተሳካ ሁኔታ ${formatETB(result.amount)} (TX: ${result.txId}) ወደ ዋሌትዎ ገብቷል!`;
+        setDepositFeedback({ type: 'success', text: okText });
+        setTxIdInput('');
+        onNotify(okText, 'success');
+        return;
+      }
+
+      // 3) Submit `pending` deposit request so admin can verify on their Telebirr (0927145171) & approve in 1 click
       const parsedManualAmount = parseFloat(depositAmountInput);
       const pendingRes = await submitPendingTelebirrDeposit({
         user,
@@ -485,7 +526,7 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
         amount: parsedManualAmount,
       });
 
-      const pendingText = `የዲፖሲት ጥያቄዎ TX: ${pendingRes.txId} (${formatETB(pendingRes.amount)}) ተልኳል! አድሚኑ በስልኩ ቴሌብር እንዳረጋገጠ ወዲያውኑ ወደ ዋሌትዎ ይገባል።`;
+      const pendingText = `የዲፖሲት ጥያቄዎ TX: ${pendingRes.txId} (${formatETB(pendingRes.amount)}) ተልኳል! አድሚኑ በስልኩ (${settings.depositPhone}) ቴሌብር እንዳረጋገጠ ወዲያውኑ ወደ ዋሌትዎ ይገባል።`;
       setDepositFeedback({ type: 'info', text: pendingText });
       setTxIdInput('');
       onNotify(pendingText, 'info');
@@ -494,7 +535,7 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
       const displayMsg =
         rawMsg && !rawMsg.startsWith('{')
           ? rawMsg
-          : 'ሰርቨር ጋር መገናኘት አልተቻለም ወይም የትራንዛክሽን ቁጥሩ አልተገኘም። እባክዎ እንደገና ይሞክሩ።';
+          : 'ትራንዛክሽኑን መላክ አልተቻለም። እባክዎ የላኩትን ትክክለኛ TX ID፣ የብር መጠን (>= 100) እና ስልክ ቁጥር አረጋግጠው እንደገና ይሞክሩ።';
       setDepositFeedback({ type: 'error', text: displayMsg });
       onNotify(displayMsg, 'error');
     } finally {
@@ -713,19 +754,24 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
 
             <div>
               <label className="block text-xs font-bold text-slate-400 mb-1.5">
-                የቴሌብር ትራንሳክሽን አይዲ (Transaction ID)
+                የቴሌብር ትራንሳክሽን አይዲ (Transaction ID ወይም የቴሌብር SMS)
               </label>
               <input
                 type="text"
                 required
                 minLength={6}
-                maxLength={24}
+                maxLength={400}
                 disabled={isVerifyingDeposit}
                 value={txIdInput}
-                onChange={(e) => setTxIdInput(e.target.value.toUpperCase())}
-                placeholder="ምሳሌ: DKF27VX4V6"
-                className="w-full bg-slate-950 border border-slate-700 focus:border-emerald-500 rounded-xl px-4 py-3 text-base font-mono-num uppercase text-white outline-none"
+                onChange={(e) => setTxIdInput(e.target.value)}
+                placeholder="ምሳሌ: DKF27VX4V6 (ወይም ሙሉ የቴሌብር SMS / ሊንክ ፔስት ያድርጉ)"
+                className="w-full bg-slate-950 border border-slate-700 focus:border-emerald-500 rounded-xl px-4 py-3 text-base font-mono-num text-white outline-none"
               />
+              {txIdInput.trim() !== '' && normalizedTx !== txIdInput.trim().toUpperCase() && (
+                <p className="text-[11px] text-emerald-400 mt-1 font-mono-num">
+                  የተለየ TX ID: <strong>{normalizedTx || '—'}</strong>
+                </p>
+              )}
 
               {/* Real-Time `received_sms_transactions` & Existing Deposit Status */}
               {existingPlayerDeposit ? (
@@ -952,10 +998,10 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
                         <span>ፔንዲንግ (Pending)</span>
                       </span>
                     )}
-                    {w.status === 'completed' && (
+                    {(w.status === 'paid' || w.status === 'completed') && (
                       <span className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-400">
                         <CheckCircle2 className="w-4 h-4" />
-                        <span>ወደ ቴሌብርዎ ገብቷል</span>
+                        <span>ወደ ቴሌብርዎ ገብቷል (Paid)</span>
                       </span>
                     )}
                     {w.status === 'rejected' && (

@@ -49,6 +49,7 @@ import { evaluateFootballPickOutcome } from './footballMarkets';
 export const PHONE_REGEX = /^0[79][0-9]{8}$/;
 export const TX_ID_REGEX = /^[A-Z0-9]{6,24}$/;
 export const DAILY_BONUS_AMOUNT = 10;
+export const DEFAULT_TELEBIRR_PHONE = '0927145171';
 
 export function getTodayBonusKey(date = new Date()): string {
   return `${date.getUTCFullYear()}_${date.getUTCMonth() + 1}_${date.getUTCDate()}`;
@@ -78,7 +79,7 @@ export function maskPlayerDisplay(rawName: string): string {
 }
 
 export function normalizePhone(raw: string): string {
-  const digits = raw.replace(/\s+/g, '').replace(/^\+251/, '0');
+  const digits = raw.replace(/[\s\-()]/g, '').replace(/^\+?251/, '0');
   if (/^[79][0-9]{8}$/.test(digits)) {
     return `0${digits}`;
   }
@@ -86,7 +87,18 @@ export function normalizePhone(raw: string): string {
 }
 
 export function normalizeTxId(raw: string): string {
-  return raw.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const trimmed = raw.trim();
+  const receiptMatch = trimmed.match(/\/receipt\/([A-Za-z0-9]{6,24})/i);
+  if (receiptMatch) {
+    return receiptMatch[1].toUpperCase();
+  }
+  const smsMatch = trimmed.match(
+    /(?:transaction\s*(?:number|id|ref|code)\s*(?:is|:)?|የግብይት\s*(?:መለያ\s*)?ቁጥር(?:ዎ)?\s*(?:is|:)?|መለያ\s*ቁጥር(?:ዎ)?\s*(?:is|:)?|TX\s*(?:ID|#)?\s*(?:is|:)?|Ref(?:erence)?\s*(?:No|ID|#)?\s*(?:is|:)?)\s*([A-Za-z0-9]{6,24})/i,
+  );
+  if (smsMatch) {
+    return smsMatch[1].toUpperCase();
+  }
+  return trimmed.toUpperCase().replace(/[^A-Z0-9]/g, '');
 }
 
 function makeDocId(prefix: string): string {
@@ -503,8 +515,8 @@ export async function ensureUserWalletAndAdmin(
       const settingsSnap = await getDoc(settingsRef);
       if (!settingsSnap.exists()) {
         await setDoc(settingsRef, {
-          depositPhone: '0911000000',
-          withdrawalPhone: '0911000000',
+          depositPhone: DEFAULT_TELEBIRR_PHONE,
+          withdrawalPhone: DEFAULT_TELEBIRR_PHONE,
           accountName: 'እድል ቤት · Edil Bet',
           minDeposit: 100,
           minWithdraw: 500,
@@ -512,6 +524,19 @@ export async function ensureUserWalletAndAdmin(
           updatedBy: user.uid,
           updatedAt: serverTimestamp(),
         });
+      } else {
+        const existingSettings = settingsSnap.data() as Partial<TelebirrSettings>;
+        if (existingSettings.depositPhone === '0911000000') {
+          await updateDoc(settingsRef, {
+            depositPhone: DEFAULT_TELEBIRR_PHONE,
+            withdrawalPhone:
+              !existingSettings.withdrawalPhone || existingSettings.withdrawalPhone === '0911000000'
+                ? DEFAULT_TELEBIRR_PHONE
+                : existingSettings.withdrawalPhone,
+            updatedBy: user.uid,
+            updatedAt: serverTimestamp(),
+          });
+        }
       }
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'settings/telebirr');
@@ -1217,7 +1242,11 @@ export async function submitPendingTelebirrDeposit(params: {
   const { user, wallet, settings, registeredPhone, rawPhone, rawTxId, amount } = params;
   const txId = normalizeTxId(rawTxId);
   const playerPhone = normalizePhone(registeredPhone || rawPhone);
-  const systemPhone = normalizePhone(settings.depositPhone);
+  const rawSystemPhone = normalizePhone(settings.depositPhone || DEFAULT_TELEBIRR_PHONE);
+  const systemPhone =
+    rawSystemPhone === '0911000000' || !PHONE_REGEX.test(rawSystemPhone)
+      ? DEFAULT_TELEBIRR_PHONE
+      : rawSystemPhone;
   const cleanAmount = Number(Number(amount).toFixed(2));
 
   if (!PHONE_REGEX.test(playerPhone)) {
@@ -1233,7 +1262,7 @@ export async function submitPendingTelebirrDeposit(params: {
   const depositRef = doc(db, 'deposits', txId);
   const usedTxRef = doc(db, 'usedTxIds', txId);
   const privateRef = doc(db, 'users', user.uid, 'private', 'info');
-  const safeName = (wallet.displayName || user.displayName || 'ተጫዋች').slice(0, 80);
+  const safeName = (wallet.displayName || user.displayName || 'ተጫዋች').trim().slice(0, 80) || 'ተጫዋች';
   const effectivePhone = registeredPhone || playerPhone;
 
   try {
@@ -1279,7 +1308,7 @@ export async function submitPendingTelebirrDeposit(params: {
         uid: user.uid,
         playerName: safeName,
         playerPhone: effectivePhone,
-        systemPhone: PHONE_REGEX.test(systemPhone) ? systemPhone : settings.depositPhone,
+        systemPhone,
         txId,
         amount: cleanAmount,
         status: 'pending',
@@ -1290,6 +1319,13 @@ export async function submitPendingTelebirrDeposit(params: {
   } catch (err) {
     if (err instanceof Error && (err.message.includes('ጥቅም ላይ') || err.message.includes('በመጠበቅ ላይ'))) {
       throw err;
+    }
+    const errCode = (err as { code?: string })?.code || '';
+    const errMsg = err instanceof Error ? err.message : '';
+    if (errCode === 'permission-denied' || errMsg.includes('permission-denied')) {
+      throw new Error(
+        `ትራንዛክሽን ${txId} ቀደም ብሎ ተመዝግቧል ወይም ጥቅም ላይ ውሏል። እባክዎ ትክክለኛውን አዲስ TX ID ያስገቡ።`,
+      );
     }
     handleFirestoreError(err, OperationType.WRITE, `deposits/${txId}`);
   }
@@ -1763,6 +1799,64 @@ export async function adminSaveGameConfig(params: {
   }
 }
 
+export async function adminApproveWithdrawal(params: {
+  withdrawal: WithdrawalRecord;
+  adminUid: string;
+}): Promise<void> {
+  const { withdrawal, adminUid } = params;
+  const withdrawalRef = doc(db, 'withdrawals', withdrawal.id);
+  const ledgerId = makeDocId('led');
+  const ledgerRef = doc(db, 'ledger', ledgerId);
+
+  try {
+    await runTransaction(db, async (tx) => {
+      const wdSnap = await tx.get(withdrawalRef);
+      if (!wdSnap.exists()) {
+        throw new Error('የዊዝድሮው ጥያቄው አልተገኘም።');
+      }
+      const wdData = wdSnap.data() as WithdrawalRecord;
+      if (wdData.status !== 'pending') {
+        throw new Error('ይህ የዊዝድሮው ጥያቄ ቀደም ብሎ ተስተናግዷል።');
+      }
+
+      tx.update(withdrawalRef, {
+        status: 'paid',
+        systemVerified: true,
+        systemVerifiedText: wdData.systemVerified
+          ? wdData.systemVerifiedText
+          : 'ትክክል ነው — አድሚኑ አረጋግጦ ከፍሏል (Paid)',
+        adminPinConfirmed: true,
+        processedBy: adminUid,
+        updatedAt: serverTimestamp(),
+      });
+
+      tx.set(ledgerRef, {
+        id: ledgerId,
+        uid: wdData.uid,
+        playerName: wdData.playerName.slice(0, 80),
+        playerPhone: wdData.playerPhone,
+        type: 'expense',
+        category: 'withdrawal',
+        amount: wdData.amount,
+        referenceId: wdData.id,
+        description: `አድሚን ዊዝድሮው አጽድቆ ከፍሏል (Paid · ${wdData.playerPhone} · Admin ${adminUid.slice(0, 8)})`.slice(
+          0,
+          180,
+        ),
+        createdAt: serverTimestamp(),
+      });
+    });
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.message.includes('አልተገኘም') || error.message.includes('ተስተናግዷል'))
+    ) {
+      throw error;
+    }
+    handleFirestoreError(error, OperationType.WRITE, `withdrawals/${withdrawal.id}`);
+  }
+}
+
 export async function adminCompleteWithdrawalWithPin(params: {
   withdrawal: WithdrawalRecord;
   adminUid: string;
@@ -1777,34 +1871,51 @@ export async function adminCompleteWithdrawalWithPin(params: {
     throw new Error('ሲስተሙ ይህን ዊዝድሮው ገና አላረጋገጠውም።');
   }
 
-  const batch = writeBatch(db);
   const withdrawalRef = doc(db, 'withdrawals', withdrawal.id);
   const ledgerId = makeDocId('led');
   const ledgerRef = doc(db, 'ledger', ledgerId);
 
-  batch.update(withdrawalRef, {
-    status: 'completed',
-    adminPinConfirmed: true,
-    processedBy: adminUid,
-    updatedAt: serverTimestamp(),
-  });
-
-  batch.set(ledgerRef, {
-    id: ledgerId,
-    uid: withdrawal.uid,
-    playerName: withdrawal.playerName.slice(0, 80),
-    playerPhone: withdrawal.playerPhone,
-    type: 'expense',
-    category: 'withdrawal',
-    amount: withdrawal.amount,
-    referenceId: withdrawal.id,
-    description: `የቴሌብር ዊዝድሮው ክፍያ ወደ ${withdrawal.playerPhone}`.slice(0, 180),
-    createdAt: serverTimestamp(),
-  });
-
   try {
-    await batch.commit();
+    await runTransaction(db, async (tx) => {
+      const wdSnap = await tx.get(withdrawalRef);
+      if (!wdSnap.exists()) {
+        throw new Error('የዊዝድሮው ጥያቄው አልተገኘም።');
+      }
+      const wdData = wdSnap.data() as WithdrawalRecord;
+      if (wdData.status !== 'pending') {
+        throw new Error('ይህ የዊዝድሮው ጥያቄ ቀደም ብሎ ተስተናግዷል።');
+      }
+
+      tx.update(withdrawalRef, {
+        status: 'paid',
+        adminPinConfirmed: true,
+        processedBy: adminUid,
+        updatedAt: serverTimestamp(),
+      });
+
+      tx.set(ledgerRef, {
+        id: ledgerId,
+        uid: wdData.uid,
+        playerName: wdData.playerName.slice(0, 80),
+        playerPhone: wdData.playerPhone,
+        type: 'expense',
+        category: 'withdrawal',
+        amount: wdData.amount,
+        referenceId: wdData.id,
+        description: `የቴሌብር ዊዝድሮው ክፍያ ወደ ${wdData.playerPhone} (Paid · PIN Confirmed)`.slice(
+          0,
+          180,
+        ),
+        createdAt: serverTimestamp(),
+      });
+    });
   } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.message.includes('አልተገኘም') || error.message.includes('ተስተናግዷል'))
+    ) {
+      throw error;
+    }
     handleFirestoreError(error, OperationType.WRITE, `withdrawals/${withdrawal.id}`);
   }
 }

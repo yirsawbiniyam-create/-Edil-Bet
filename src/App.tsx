@@ -65,11 +65,13 @@ import {
   claimDailyLoginBonus,
   completeRecoveredPasswordSetup,
   DAILY_BONUS_AMOUNT,
+  DEFAULT_TELEBIRR_PHONE,
   ensureUserWalletAndAdmin,
   extractPhoneFromAuthEmail,
   getCurrentWeekKey,
   getDailyBonusClaimId,
   loginPlayerWithIdentifier,
+  PHONE_REGEX,
   recoverPlayerAccountByPhone,
   registerPlayerWithPhone,
   updateAccountPassword,
@@ -526,9 +528,30 @@ export default function App() {
     };
   }, [authReady, user, isAdmin]);
 
+  const effectiveSettings = useMemo<TelebirrSettings>(() => {
+    const dep = settings?.depositPhone;
+    const wdr = settings?.withdrawalPhone;
+    const validDep =
+      dep && dep !== '0911000000' && PHONE_REGEX.test(dep) ? dep : DEFAULT_TELEBIRR_PHONE;
+    const validWdr =
+      wdr && wdr !== '0911000000' && PHONE_REGEX.test(wdr) ? wdr : validDep;
+    return {
+      depositPhone: validDep,
+      withdrawalPhone: validWdr,
+      accountName: settings?.accountName || 'እድል ቤት · Edil Bet',
+      minDeposit: settings?.minDeposit ?? 100,
+      minWithdraw: settings?.minWithdraw ?? 500,
+      houseWinRate: settings?.houseWinRate ?? 0.28,
+      updatedBy: settings?.updatedBy || 'system',
+      updatedAt: settings?.updatedAt as TelebirrSettings['updatedAt'],
+    };
+  }, [settings]);
+
   const pendingAdminCount = useMemo(
-    () => allWithdrawals.filter((w) => w.status === 'pending').length,
-    [allWithdrawals],
+    () =>
+      allWithdrawals.filter((w) => w.status === 'pending').length +
+      allDeposits.filter((d) => d.status === 'pending').length,
+    [allWithdrawals, allDeposits],
   );
 
   const displayAccountPhone = useMemo(() => {
@@ -1743,8 +1766,10 @@ export default function App() {
                 <WalletPanel
                   user={user}
                   wallet={wallet}
-                  settings={settings}
-                  registeredPhone={privateInfo?.telebirrPhone || null}
+                  settings={effectiveSettings}
+                  registeredPhone={
+                    privateInfo?.telebirrPhone || extractPhoneFromAuthEmail(user.email) || null
+                  }
                   deposits={myDeposits}
                   withdrawals={myWithdrawals}
                   onNotify={notify}
@@ -1762,7 +1787,7 @@ export default function App() {
               <div className="pt-3">
                 <AdminPanel
                   adminUid={user.uid}
-                  settings={settings}
+                  settings={effectiveSettings}
                   branding={branding}
                   gameConfig={gameConfig}
                   withdrawals={allWithdrawals}
