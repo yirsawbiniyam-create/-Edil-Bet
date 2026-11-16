@@ -15,15 +15,20 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Trash2,
+  XCircle,
 } from 'lucide-react';
 import { DEFAULT_GAME_CONFIG, formatETB, GameConfigValues } from '../lib/gameEngine';
 import {
+  adminApprovePendingDeposit,
   adminCompleteWithdrawalWithPin,
+  adminRecordManualTelebirrTx,
   adminRecordSimulatedTelebirrSms,
   adminRejectAndRefundWithdrawal,
+  adminRejectPendingDeposit,
   adminSaveGameConfig,
   adminSaveGameLogo,
   adminSaveTelebirrSettings,
+  adminSyncWebhookSmsBatch,
   runSystemWithdrawalVerification,
 } from '../lib/firestoreService';
 import {
@@ -143,11 +148,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [telebirrPin, setTelebirrPin] = useState('');
   const [processingId, setProcessingId] = useState<string | null>(null);
 
+  // Pending Deposits Approval Queue
+  const [processingDepositId, setProcessingDepositId] = useState<string | null>(null);
+
   // Activity Log Views
   const [logView, setLogView] = useState<'ledger' | 'deposits' | 'withdrawals'>('ledger');
   const [ledgerFilter, setLedgerFilter] = useState<'all' | 'income' | 'expense'>('all');
 
-  // Telebirr MacroDroid SMS Gateway Test State
+  // Telebirr Manual TX Entry & MacroDroid SMS Gateway State
+  const [manualTxIdInput, setManualTxIdInput] = useState('');
+  const [manualTxAmountInput, setManualTxAmountInput] = useState('500');
+  const [savingManualTx, setSavingManualTx] = useState(false);
   const [simSmsText, setSimSmsText] = useState(
     'You have received ETB 500.00 from 0911223344. Your transaction number is TB84X92K1M.',
   );
@@ -185,6 +196,43 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       });
     }
   }, [gameConfig]);
+
+  // Auto-sync any incoming MacroDroid Webhook SMS messages from Express server memory into Firestore
+  useEffect(() => {
+    let active = true;
+    const syncWebhook = async () => {
+      try {
+        const resp = await fetch('/api/telebirr-sms-webhook/recent');
+        if (!resp.ok || !active) return;
+        const data = (await resp.json()) as {
+          items?: Array<{
+            transaction_id: string;
+            amount: number;
+            status: string;
+            source?: string;
+          }>;
+        };
+        if (Array.isArray(data.items) && data.items.length > 0) {
+          await adminSyncWebhookSmsBatch(data.items);
+        }
+      } catch {
+        // Non-fatal background sync
+      }
+    };
+
+    void syncWebhook();
+    const timer = window.setInterval(syncWebhook, 15000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  const pendingDeposits = useMemo(() => {
+    return [...deposits]
+      .filter((d) => d.status === 'pending')
+      .sort((a, b) => (a.createdAt?.toMillis?.() || 0) - (b.createdAt?.toMillis?.() || 0));
+  }, [deposits]);
 
   const pendingQueue = useMemo(() => {
     return [...withdrawals]
@@ -389,6 +437,63 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     }
   };
 
+  const handleApprovePendingDeposit = async (deposit: DepositRecord) => {
+    setProcessingDepositId(deposit.id);
+    try {
+      await adminApprovePendingDeposit({ deposit, adminUid });
+      onNotify(
+        `TX ${deposit.txId} (${formatETB(deposit.amount)}) ተረጋግጦ ወደ ${deposit.playerName} ዋሌት ገብቷል!`,
+        'success',
+      );
+    } catch (err) {
+      onNotify(err instanceof Error ? err.message : 'ዲፖሲቱን ማጽደቅ አልተቻለም።', 'error');
+    } finally {
+      setProcessingDepositId(null);
+    }
+  };
+
+  const handleRejectPendingDeposit = async (deposit: DepositRecord) => {
+    setProcessingDepositId(deposit.id);
+    try {
+      await adminRejectPendingDeposit({ deposit, adminUid });
+      onNotify(`TX ${deposit.txId} ውድቅ ተደርጓል።`, 'info');
+    } catch (err) {
+      onNotify(err instanceof Error ? err.message : 'ዲፖሲቱን ውድቅ ማድረግ አልተቻለም።', 'error');
+    } finally {
+      setProcessingDepositId(null);
+    }
+  };
+
+  const handleQuickRecordManualTx = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingManualTx(true);
+    try {
+      const res = await adminRecordManualTelebirrTx({
+        rawTxId: manualTxIdInput,
+        amount: parseFloat(manualTxAmountInput),
+      });
+      await fetch('/api/telebirr-sms-webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          secret_key: 'yene_betting_secret_key_123',
+          message: `You have received ETB ${res.amount.toFixed(2)}. Your transaction number is ${res.transactionId}.`,
+          source: 'admin_manual',
+        }),
+      }).catch(() => undefined);
+
+      onNotify(
+        `TX: ${res.transactionId} (${formatETB(res.amount)}) በ received_sms_transactions ተመዝግቧል! ተጫዋቹ ወዲያውኑ ዲፖሲት ማድረግ ይችላል።`,
+        'success',
+      );
+      setManualTxIdInput('');
+    } catch (err) {
+      onNotify(err instanceof Error ? err.message : 'TX ID መመዝገብ አልተቻለም።', 'error');
+    } finally {
+      setSavingManualTx(false);
+    }
+  };
+
   const webhookEndpointUrl =
     typeof window !== 'undefined'
       ? `${window.location.origin}/api/telebirr-sms-webhook`
@@ -407,7 +512,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         body: JSON.stringify({
           secret_key: 'yene_betting_secret_key_123',
           message: simSmsText,
-          source: 'admin_sim',
+          source: 'admin_sms',
         }),
       }).catch(() => undefined);
 
@@ -638,17 +743,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           </div>
         </form>
 
-        {/* Telebirr SMS Gateway / MacroDroid Webhook Setup & Test Simulator */}
+        {/* Telebirr Personal Phone Manual TX Entry & MacroDroid SMS Gateway */}
         <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-4 sm:p-5 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2.5">
               <MessageSquareText className="w-5 h-5 text-emerald-400 shrink-0" />
               <div>
                 <h3 className="text-sm font-extrabold text-white">
-                  የቴሌብር አውቶማቲክ SMS Gateway (MacroDroid Webhook)
+                  በአንድሮይድ ስልክዎ የቴሌብር SMS መመዝገቢያ (Manual TX ወይም MacroDroid Webhook)
                 </h3>
                 <p className="text-xs text-slate-400">
-                  ከቴሌብር (127) የሚመጡ SMS ዎችን በMacroDroid POST Webhook ወደ `received_sms_transactions` ይላኩ
+                  በስልክዎ ቴሌብር SMS (127) ሲደርስዎት TX ID + ብር መጠኑን እዚህ መመዝገብ ወይም MacroDroid አውቶማቲክ ማገናኘት ይችላሉ
                 </p>
               </div>
             </div>
@@ -667,9 +772,56 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </button>
           </div>
 
+          {/* Option A: Quick Manual TX ID + Amount Entry from Admin Phone */}
+          <form
+            onSubmit={handleQuickRecordManualTx}
+            className="bg-slate-900/90 border border-emerald-500/30 rounded-xl p-3.5 space-y-2.5"
+          >
+            <span className="text-xs font-extrabold text-emerald-300 block">
+              አማራጭ 1 (ፈጣን)፡ በስልክዎ የደረሰውን የቴሌብር TX ID እና ብር መጠን ቀጥታ ይመዝግቡ
+            </span>
+            <div className="grid sm:grid-cols-3 gap-2.5 items-center">
+              <input
+                type="text"
+                required
+                minLength={6}
+                maxLength={24}
+                value={manualTxIdInput}
+                onChange={(e) => setManualTxIdInput(e.target.value.toUpperCase())}
+                placeholder="TX ID (ምሳሌ: DKF27VX4V6)"
+                className="bg-slate-950 border border-slate-700 focus:border-emerald-500 rounded-xl px-3.5 py-2.5 text-sm font-mono-num uppercase text-white outline-none"
+              />
+              <div className="relative">
+                <input
+                  type="number"
+                  required
+                  min={100}
+                  max={500000}
+                  step={1}
+                  value={manualTxAmountInput}
+                  onChange={(e) => setManualTxAmountInput(e.target.value)}
+                  placeholder="የብር መጠን"
+                  className="w-full bg-slate-950 border border-slate-700 focus:border-emerald-500 rounded-xl px-3.5 py-2.5 pr-12 text-sm font-mono-num text-white outline-none"
+                />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
+                  ብር
+                </span>
+              </div>
+              <button
+                type="submit"
+                disabled={savingManualTx}
+                className="px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-60 text-slate-950 font-extrabold text-xs flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                <span>{savingManualTx ? 'በመመዝገብ ላይ...' : 'TX ID መዝግብ (Unused)'}</span>
+              </button>
+            </div>
+          </form>
+
+          {/* Option B: Paste Real SMS Text + MacroDroid Webhook */}
           <div className="grid md:grid-cols-2 gap-3 text-xs">
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 space-y-1">
-              <span className="text-slate-400 font-bold block">POST Webhook Endpoint</span>
+              <span className="text-slate-400 font-bold block">MacroDroid POST Webhook URL</span>
               <code className="font-mono-num text-emerald-300 break-all block">
                 {webhookEndpointUrl}
               </code>
@@ -677,7 +829,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 space-y-1">
               <span className="text-slate-400 font-bold block">MacroDroid JSON Body Format</span>
               <code className="font-mono-num text-amber-300 break-all block">
-                {'{"secret_key":"yene_betting_secret_key_123","message":"{sms_text}"}'}
+                {'{"secret_key":"yene_betting_secret_key_123","message":"[sms_message]"}'}
               </code>
             </div>
           </div>
@@ -688,7 +840,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               required
               value={simSmsText}
               onChange={(e) => setSimSmsText(e.target.value)}
-              placeholder="You have received ETB 500.00 ... transaction number is TB..."
+              placeholder="ከቴሌብር (127) የደረሰውን ሙሉ SMS ኮፒ አድርገው እዚህ ፔስት ያድርጉ (አማርኛ ወይም English)..."
               className="flex-1 bg-slate-900 border border-slate-700 focus:border-emerald-500 rounded-xl px-3.5 py-2.5 text-xs font-mono-num text-white outline-none"
             />
             <button
@@ -697,7 +849,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-slate-950 font-extrabold text-xs flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
             >
               <Send className="w-3.5 h-3.5" />
-              <span>{sendingSimSms ? 'በመመዝገብ ላይ...' : 'የሙከራ SMS ላክ'}</span>
+              <span>{sendingSimSms ? 'በመመዝገብ ላይ...' : 'ሙሉ SMS ፔስት አድርገህ መዝግብ'}</span>
             </button>
           </form>
         </div>
@@ -1009,6 +1161,85 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         </form>
       </section>
 
+      {/* 3A. Pending Deposits Approval Queue (When sent to Admin Personal Phone without Auto-Webhook) */}
+      <section className="bg-slate-900/95 border border-emerald-500/30 rounded-3xl p-5 sm:p-6 space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-emerald-500/15 text-emerald-400 flex items-center justify-center">
+              <ArrowDownLeft className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="text-lg font-extrabold text-white">
+                በመጠባበቅ ላይ ያሉ ዲፖሲቶች ({pendingDeposits.length} Pending Deposits)
+              </h2>
+              <p className="text-xs text-slate-400">
+                ተጫዋቾች በስልክዎ ቴሌብር ላይ ብር ልከው Transaction ID ሲያስገቡ እዚህ ይታያል — በስልክዎ SMS አረጋግጠው አጽድቁላቸው
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {pendingDeposits.length === 0 ? (
+          <div className="py-8 text-center text-slate-500 text-sm">
+            በአሁኑ ጊዜ የአድሚን ማረጋገጫ የሚጠብቅ ዲፖሲት የለም።
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {pendingDeposits.map((dep, index) => {
+              const isBusy = processingDepositId === dep.id;
+              return (
+                <div
+                  key={dep.id}
+                  className="rounded-2xl border border-amber-500/35 bg-slate-950/80 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                >
+                  <div className="space-y-1">
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      <span className="font-mono-num text-xs font-black text-amber-400">
+                        #{index + 1}
+                      </span>
+                      <span className="font-bold text-white">{dep.playerName}</span>
+                      <span className="font-mono-num text-xs font-bold text-slate-300">
+                        {dep.playerPhone}
+                      </span>
+                      <span className="font-mono-num text-sm font-black text-amber-300">
+                        TX: {dep.txId}
+                      </span>
+                      <span className="font-mono-num text-base font-black text-emerald-400">
+                        +{formatETB(dep.amount)}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-400">
+                      ወደ ስልክዎ <strong className="font-mono-num text-slate-200">{dep.systemPhone}</strong> · የቴሌብር SMS ከደረሰዎት &quot;አጽድቅ&quot; ይጫኑ
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      disabled={isBusy}
+                      onClick={() => handleApprovePendingDeposit(dep)}
+                      className="px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 font-black text-xs flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap"
+                    >
+                      <CheckCircle2 className="w-4 h-4" />
+                      <span>{isBusy ? 'በማጽደቅ ላይ...' : 'ትክክል ነው — አጽድቅና ሂሳብ ሙላ'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isBusy}
+                      onClick={() => handleRejectPendingDeposit(dep)}
+                      className="px-3.5 py-2.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/40 text-rose-300 font-bold text-xs flex items-center gap-1 transition cursor-pointer whitespace-nowrap"
+                    >
+                      <XCircle className="w-4 h-4" />
+                      <span>ውድቅ</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
       {/* 3. Sequential Pending Withdrawals Queue */}
       <section className="bg-slate-900/95 border border-slate-800 rounded-3xl p-5 sm:p-6 space-y-5">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-4">
@@ -1313,10 +1544,22 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                       <td className="py-3 px-3 font-mono-num text-amber-300 whitespace-nowrap">
                         {d.txId}
                       </td>
-                      <td className="py-3 px-3 text-emerald-400 font-bold whitespace-nowrap">
-                        ትክክል ነው
+                      <td className="py-3 px-3 font-bold whitespace-nowrap">
+                        {d.status === 'pending' && (
+                          <span className="text-amber-400">ፔንዲንግ</span>
+                        )}
+                        {d.status === 'verified' && (
+                          <span className="text-emerald-400">ትክክል ነው</span>
+                        )}
+                        {d.status === 'rejected' && (
+                          <span className="text-rose-400">ውድቅ ተደርጓል</span>
+                        )}
                       </td>
-                      <td className="py-3 px-3 text-right font-mono-num font-extrabold text-emerald-400 whitespace-nowrap">
+                      <td
+                        className={`py-3 px-3 text-right font-mono-num font-extrabold whitespace-nowrap ${
+                          d.status === 'rejected' ? 'text-slate-500 line-through' : 'text-emerald-400'
+                        }`}
+                      >
                         +{formatETB(d.amount)}
                       </td>
                     </tr>

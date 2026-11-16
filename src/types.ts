@@ -292,9 +292,11 @@ export interface DepositRecord {
   systemPhone: string;
   txId: string;
   amount: number;
-  status: 'verified';
+  status: 'pending' | 'verified' | 'rejected';
   verifiedMessage: string;
+  processedBy?: string;
   createdAt: Timestamp;
+  updatedAt?: Timestamp;
 }
 
 export interface WithdrawalRecord {

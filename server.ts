@@ -1729,12 +1729,12 @@ async function startServer() {
         return;
       }
 
-      const amountRegex = /(?:ETB|Br|ብር)\s*([\d,]+(?:\.\d{1,2})?)/i;
-      const txIdRegex =
-        /(?:transaction\s+(?:number|id)\s*(?:is|:)?|የግብይት\s*ቁጥር\s*(?:is|:)?|TX\s*(?:ID|#)?\s*(?:is|:)?)\s*([A-Za-z0-9]{6,24})/i;
-
-      const amountMatch = message.match(amountRegex);
-      const txIdMatch = message.match(txIdRegex);
+      const amountMatch =
+        message.match(/(?:ETB|Br|Birr|ብር)\s*([\d,]+(?:\.\d{1,2})?)/i) ||
+        message.match(/([\d,]+(?:\.\d{1,2})?)\s*(?:ETB|Br|Birr|ብር)/i);
+      const txIdMatch = message.match(
+        /(?:transaction\s*(?:number|id|ref|code)\s*(?:is|:)?|የግብይት\s*(?:መለያ\s*)?ቁጥር(?:ዎ)?\s*(?:is|:)?|መለያ\s*ቁጥር(?:ዎ)?\s*(?:is|:)?|TX\s*(?:ID|#)?\s*(?:is|:)?|Ref(?:erence)?\s*(?:No|ID|#)?\s*(?:is|:)?)\s*([A-Za-z0-9]{6,24})/i,
+      );
 
       if (!amountMatch || !txIdMatch) {
         res.status(400).json({

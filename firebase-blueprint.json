@@ -335,14 +335,22 @@
         },
         "status": {
           "type": "string",
-          "enum": ["verified"]
+          "enum": ["pending", "verified", "rejected"]
         },
         "verifiedMessage": {
           "type": "string",
           "minLength": 2,
           "maxLength": 120
         },
+        "processedBy": {
+          "type": "string",
+          "maxLength": 128
+        },
         "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
           "type": "string",
           "format": "date-time"
         }

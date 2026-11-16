@@ -21,6 +21,7 @@ import {
   normalizeTxId,
   PHONE_REGEX,
   runSystemWithdrawalVerification,
+  submitPendingTelebirrDeposit,
   submitTelebirrWithdrawal,
   TX_ID_REGEX,
 } from '../lib/firestoreService';
@@ -57,14 +58,19 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
   // Deposit Form
   const [depositPhone, setDepositPhone] = useState(registeredPhone || '');
   const [txIdInput, setTxIdInput] = useState('');
+  const [depositAmountInput, setDepositAmountInput] = useState('500');
   const [isVerifyingDeposit, setIsVerifyingDeposit] = useState(false);
   const [depositFeedback, setDepositFeedback] = useState<{
-    type: 'success' | 'error';
+    type: 'success' | 'info' | 'error';
     text: string;
   } | null>(null);
 
   // Real-time `received_sms_transactions` lookup state
   const normalizedTx = useMemo(() => normalizeTxId(txIdInput), [txIdInput]);
+  const existingPlayerDeposit = useMemo(
+    () => deposits.find((d) => d.txId === normalizedTx),
+    [deposits, normalizedTx],
+  );
   const [smsLookupState, setSmsLookupState] = useState<{
     state: 'idle' | 'checking' | 'unused' | 'used' | 'not_found';
     amount?: number;
@@ -439,12 +445,50 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
         return;
       }
 
-      // 2) Execute direct client atomic Firestore `runTransaction` against `received_sms_transactions` & `users`
-      const result = await verifyAndCreditSmsTransaction(txIdInput);
-      const okText = `በተሳካ ሁኔታ ${formatETB(result.amount)} (TX: ${result.txId}) ወደ ዋሌትዎ ገብቷል!`;
-      setDepositFeedback({ type: 'success', text: okText });
+      // 2) If SMS record is present (Firestore or Express Webhook), execute instant atomic credit
+      if (smsLookupState.state === 'unused') {
+        const result = await verifyAndCreditSmsTransaction(txIdInput);
+        const okText = `በተሳካ ሁኔታ ${formatETB(result.amount)} (TX: ${result.txId}) ወደ ዋሌትዎ ገብቷል!`;
+        setDepositFeedback({ type: 'success', text: okText });
+        setTxIdInput('');
+        onNotify(okText, 'success');
+        return;
+      }
+
+      // 3) Check once more in case SMS just arrived before falling back to Pending Admin verification
+      try {
+        const result = await verifyAndCreditSmsTransaction(txIdInput);
+        const okText = `በተሳካ ሁኔታ ${formatETB(result.amount)} (TX: ${result.txId}) ወደ ዋሌትዎ ገብቷል!`;
+        setDepositFeedback({ type: 'success', text: okText });
+        setTxIdInput('');
+        onNotify(okText, 'success');
+        return;
+      } catch (smsErr) {
+        const smsMsg = smsErr instanceof Error ? smsErr.message : '';
+        const notFoundYet =
+          smsMsg.includes('አልተገኘም') || smsMsg.includes('received_sms_transactions');
+        if (!notFoundYet) {
+          throw smsErr;
+        }
+      }
+
+      // 4) Fallback when admin's personal phone SMS isn't synced to Webhook yet:
+      // Submit `pending` deposit request so admin can approve 1-click from their Admin panel
+      const parsedManualAmount = parseFloat(depositAmountInput);
+      const pendingRes = await submitPendingTelebirrDeposit({
+        user,
+        wallet,
+        settings,
+        registeredPhone,
+        rawPhone: depositPhone,
+        rawTxId: cleanTx,
+        amount: parsedManualAmount,
+      });
+
+      const pendingText = `የዲፖሲት ጥያቄዎ TX: ${pendingRes.txId} (${formatETB(pendingRes.amount)}) ተልኳል! አድሚኑ በስልኩ ቴሌብር እንዳረጋገጠ ወዲያውኑ ወደ ዋሌትዎ ይገባል።`;
+      setDepositFeedback({ type: 'info', text: pendingText });
       setTxIdInput('');
-      onNotify(okText, 'success');
+      onNotify(pendingText, 'info');
     } catch (err) {
       const rawMsg = err instanceof Error ? err.message : '';
       const displayMsg =
@@ -585,11 +629,15 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
               className={`p-4 rounded-2xl border flex items-center gap-3 ${
                 depositFeedback.type === 'success'
                   ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
-                  : 'bg-rose-500/15 border-rose-500/40 text-rose-300'
+                  : depositFeedback.type === 'info'
+                    ? 'bg-amber-500/15 border-amber-500/40 text-amber-200'
+                    : 'bg-rose-500/15 border-rose-500/40 text-rose-300'
               }`}
             >
               {depositFeedback.type === 'success' ? (
                 <CheckCircle2 className="w-6 h-6 text-emerald-400 shrink-0" />
+              ) : depositFeedback.type === 'info' ? (
+                <Clock className="w-6 h-6 text-amber-400 shrink-0" />
               ) : (
                 <XCircle className="w-6 h-6 text-rose-400 shrink-0" />
               )}
@@ -627,24 +675,39 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
 
               <div>
                 <label className="block text-xs font-bold text-slate-400 mb-1.5">
-                  ከቴሌብር SMS የሚረጋገጥ የብር መጠን
+                  የላኩት የብር መጠን (ዝቅተኛ 100 ብር)
                 </label>
-                <div className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-base font-mono-num flex items-center justify-between">
-                  <span
-                    className={
-                      smsLookupState.state === 'unused'
-                        ? 'text-emerald-400 font-black'
-                        : smsLookupState.state === 'used'
-                          ? 'text-rose-400 font-bold'
-                          : 'text-slate-400'
-                    }
-                  >
-                    {typeof smsLookupState.amount === 'number'
-                      ? formatETB(smsLookupState.amount)
-                      : 'Transaction ID ሲያስገቡ በራስ-ሰር ይሞላል'}
-                  </span>
-                  <span className="text-[11px] font-bold text-slate-400">Auto-SMS</span>
-                </div>
+                {smsLookupState.state === 'unused' && typeof smsLookupState.amount === 'number' ? (
+                  <div className="w-full bg-slate-950 border border-emerald-500/50 rounded-xl px-4 py-3 text-base font-mono-num flex items-center justify-between">
+                    <span className="text-emerald-400 font-black">
+                      {formatETB(smsLookupState.amount)}
+                    </span>
+                    <span className="text-[11px] font-bold text-emerald-300">Auto-SMS Verified</span>
+                  </div>
+                ) : (
+                  <div className="relative">
+                    <input
+                      type="number"
+                      required
+                      min={100}
+                      max={500000}
+                      step={1}
+                      disabled={isVerifyingDeposit}
+                      value={depositAmountInput}
+                      onChange={(e) => setDepositAmountInput(e.target.value)}
+                      placeholder="500"
+                      className="w-full bg-slate-950 border border-slate-700 focus:border-emerald-500 rounded-xl px-4 py-3 pr-14 text-base font-mono-num text-white outline-none"
+                    />
+                    <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
+                      ብር
+                    </span>
+                  </div>
+                )}
+                <p className="text-[11px] text-slate-400 mt-1">
+                  {smsLookupState.state === 'unused'
+                    ? 'ከቴሌብር SMS በራስ-ሰር ተረጋግጧል።'
+                    : 'በቴሌብር የላኩትን ትክክለኛ የብር መጠን ያስገቡ (Auto-SMS ካልደረሰ አድሚኑ ያረጋግጠዋል)።'}
+                </p>
               </div>
             </div>
 
@@ -660,62 +723,94 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
                 disabled={isVerifyingDeposit}
                 value={txIdInput}
                 onChange={(e) => setTxIdInput(e.target.value.toUpperCase())}
-                placeholder="ምሳሌ: BIE4567890"
+                placeholder="ምሳሌ: DKF27VX4V6"
                 className="w-full bg-slate-950 border border-slate-700 focus:border-emerald-500 rounded-xl px-4 py-3 text-base font-mono-num uppercase text-white outline-none"
               />
 
-              {/* Real-Time `received_sms_transactions` Auto-Verification Status */}
-              {smsLookupState.state !== 'idle' && (
+              {/* Real-Time `received_sms_transactions` & Existing Deposit Status */}
+              {existingPlayerDeposit ? (
                 <div
-                  className={`mt-2 rounded-xl border px-3.5 py-2.5 text-xs flex items-center gap-2 ${
-                    smsLookupState.state === 'unused'
-                      ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300 font-bold'
-                      : smsLookupState.state === 'used'
-                        ? 'bg-rose-500/15 border-rose-500/40 text-rose-300 font-bold'
-                        : 'bg-slate-950 border-slate-800 text-slate-300'
+                  className={`mt-2 rounded-xl border px-3.5 py-2.5 text-xs flex items-center gap-2 font-bold ${
+                    existingPlayerDeposit.status === 'pending'
+                      ? 'bg-amber-500/15 border-amber-500/40 text-amber-200'
+                      : existingPlayerDeposit.status === 'verified'
+                        ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                        : 'bg-rose-500/15 border-rose-500/40 text-rose-300'
                   }`}
                 >
-                  {smsLookupState.state === 'unused' && (
-                    <>
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                      <span>
-                        በራስ-ሰር ተገኝቷል ({smsLookupState.sourceLabel}) ·{' '}
-                        <strong className="font-mono-num text-white">
-                          {formatETB(smsLookupState.amount || 0)}
-                        </strong>{' '}
-                        (Unused — ለመጨመር ዝግጁ)
-                      </span>
-                    </>
+                  {existingPlayerDeposit.status === 'pending' ? (
+                    <Clock className="w-4 h-4 text-amber-400 shrink-0" />
+                  ) : existingPlayerDeposit.status === 'verified' ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  ) : (
+                    <XCircle className="w-4 h-4 text-rose-400 shrink-0" />
                   )}
-                  {smsLookupState.state === 'used' && (
-                    <>
-                      <XCircle className="w-4 h-4 text-rose-400 shrink-0" />
-                      <span>
-                        ይህ የትራንዛክሽን ቁጥር ከዚህ በፊት ጥቅም ላይ ውሏል! (Status: Used)
-                      </span>
-                    </>
-                  )}
-                  {smsLookupState.state === 'checking' && (
-                    <>
-                      <Clock className="w-4 h-4 text-amber-400 shrink-0 animate-spin" />
-                      <span>በፋየርስቶር received_sms_transactions ላይ በመፈለግ ላይ...</span>
-                    </>
-                  )}
-                  {smsLookupState.state === 'not_found' && (
-                    <>
-                      <MessageSquareText className="w-4 h-4 text-slate-400 shrink-0" />
-                      <span>
-                        በ received_sms_transactions ውስጥ ገና አልተገኘም — የቴሌብር SMS እስኪደርስ ጥቂት ሰከንዶች ይጠብቁ ወይም ቁልፉን ተጭነው ይሞክሩ።
-                      </span>
-                    </>
-                  )}
+                  <span>
+                    {existingPlayerDeposit.status === 'pending'
+                      ? `TX ${existingPlayerDeposit.txId} (${formatETB(existingPlayerDeposit.amount)}) ቀደም ብሎ ተልኮ የአድሚን ማረጋገጫ በመጠበቅ ላይ (Pending) ነው።`
+                      : existingPlayerDeposit.status === 'verified'
+                        ? `TX ${existingPlayerDeposit.txId} (${formatETB(existingPlayerDeposit.amount)}) ቀደም ብሎ ተረጋግጦ ገብቷል።`
+                        : `TX ${existingPlayerDeposit.txId} ውድቅ ተደርጓል — እባክዎ ትክክለኛውን TX ID ያስገቡ።`}
+                  </span>
                 </div>
+              ) : (
+                smsLookupState.state !== 'idle' && (
+                  <div
+                    className={`mt-2 rounded-xl border px-3.5 py-2.5 text-xs flex items-center gap-2 ${
+                      smsLookupState.state === 'unused'
+                        ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300 font-bold'
+                        : smsLookupState.state === 'used'
+                          ? 'bg-rose-500/15 border-rose-500/40 text-rose-300 font-bold'
+                          : 'bg-slate-950 border-slate-800 text-slate-300'
+                    }`}
+                  >
+                    {smsLookupState.state === 'unused' && (
+                      <>
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                        <span>
+                          በራስ-ሰር ተገኝቷል ({smsLookupState.sourceLabel}) ·{' '}
+                          <strong className="font-mono-num text-white">
+                            {formatETB(smsLookupState.amount || 0)}
+                          </strong>{' '}
+                          (Unused — ወዲያውኑ ወደ ዋሌት ይገባል)
+                        </span>
+                      </>
+                    )}
+                    {smsLookupState.state === 'used' && (
+                      <>
+                        <XCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                        <span>
+                          ይህ የትራንዛክሽን ቁጥር ከዚህ በፊት ጥቅም ላይ ውሏል! (Status: Used)
+                        </span>
+                      </>
+                    )}
+                    {smsLookupState.state === 'checking' && (
+                      <>
+                        <Clock className="w-4 h-4 text-amber-400 shrink-0 animate-spin" />
+                        <span>በቴሌብር SMS መዝገብ ላይ በመፈለግ ላይ...</span>
+                      </>
+                    )}
+                    {smsLookupState.state === 'not_found' && (
+                      <>
+                        <MessageSquareText className="w-4 h-4 text-amber-400 shrink-0" />
+                        <span>
+                          አውቶ-SMS ገና አልደረሰም — የላኩትን የብር መጠን ከላይ አስገብተው ሲልኩ አድሚኑ በስልኩ ቴሌብር አረጋግጦ ወዲያውኑ ዋሌትዎን ይሞላል።
+                        </span>
+                      </>
+                    )}
+                  </div>
+                )
               )}
             </div>
 
             <button
               type="submit"
-              disabled={isVerifyingDeposit || !settings || smsLookupState.state === 'used'}
+              disabled={
+                isVerifyingDeposit ||
+                !settings ||
+                smsLookupState.state === 'used' ||
+                Boolean(existingPlayerDeposit)
+              }
               className="w-full py-3.5 px-6 rounded-2xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-60 text-slate-950 font-black text-base flex items-center justify-center gap-2 transition cursor-pointer"
             >
               <ShieldCheck className="w-5 h-5" />
@@ -723,8 +818,8 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
                 {isVerifyingDeposit
                   ? 'በማጣራት ላይ...'
                   : smsLookupState.state === 'unused'
-                    ? `ገንዘብ ጫን · Verify Deposit (${formatETB(smsLookupState.amount || 0)})`
-                    : 'ገንዘብ ጫን (Verify Deposit)'}
+                    ? `ወዲያውኑ ዋሌት ሙላ · Verify (${formatETB(smsLookupState.amount || 0)})`
+                    : 'ዲፖሲት አረጋግጥ / ለአድሚን ላክ'}
               </span>
             </button>
           </form>
@@ -871,12 +966,21 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
                     )}
                   </div>
 
-                  <div className="text-xs text-slate-400 flex flex-wrap gap-x-3 gap-y-1">
-                    <span>ቴሌብር: <strong className="font-mono-num text-slate-200">{w.playerPhone}</strong></span>
-                    <span>·</span>
-                    <span className={w.systemVerified ? 'text-emerald-400 font-bold' : 'text-amber-300'}>
-                      {w.systemVerified ? 'ትክክል ነው (ሲስተሙ አረጋግጧል)' : w.systemVerifiedText}
-                    </span>
+                  <div className="text-xs text-slate-400 space-y-1">
+                    <div className="flex flex-wrap gap-x-3 gap-y-1">
+                      <span>ቴሌብር: <strong className="font-mono-num text-slate-200">{w.playerPhone}</strong></span>
+                      <span>·</span>
+                      <span className={w.systemVerified ? 'text-emerald-400 font-bold' : 'text-amber-300'}>
+                        {w.systemVerified ? '1. ሲስተም ማረጋገጫ: ትክክል ነው' : `1. ${w.systemVerifiedText}`}
+                      </span>
+                    </div>
+                    {w.status === 'pending' && (
+                      <p className="text-[11px] text-slate-400">
+                        {w.systemVerified
+                          ? '2. አድሚኑ የቴሌብር ሚስጥር ቁጥር ሲያስገባ ብሩ በቴሌብር ቁጥርዎ ላይ ይገባል።'
+                          : '2. ሲስተሙ የዲፖሲት እና የማሸነፍ ትክክለኛነት እንዳረጋገጠ አድሚኑ ሚስጥር ቁጥሩን ያስገባል።'}
+                      </p>
+                    )}
                   </div>
                 </div>
               ))}
@@ -888,7 +992,7 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
         <section className="bg-slate-900/90 border border-slate-800 rounded-3xl p-5 sm:p-6 space-y-4">
           <div className="border-b border-slate-800 pb-3">
             <h3 className="text-base font-extrabold text-white">የቴሌብር ዲፖሲት ታሪክ</h3>
-            <p className="text-xs text-slate-400">በፋየርስቶር ላይ የተመዘገቡ እና የተረጋገጡ ዲፖሲቶች</p>
+            <p className="text-xs text-slate-400">በፋየርስቶር ላይ የተመዘገቡ፣ ፔንዲንግ እና የተረጋገጡ ዲፖሲቶች</p>
           </div>
 
           {deposits.length === 0 ? (
@@ -901,19 +1005,44 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
                   className="bg-slate-950/80 border border-slate-800 rounded-2xl p-4 space-y-1.5"
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span className="font-mono-num text-base font-black text-emerald-400">
+                    <span
+                      className={`font-mono-num text-base font-black ${
+                        d.status === 'verified'
+                          ? 'text-emerald-400'
+                          : d.status === 'pending'
+                            ? 'text-amber-400'
+                            : 'text-rose-400'
+                      }`}
+                    >
                       +{formatETB(d.amount)}
                     </span>
-                    <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-400">
-                      <CheckCircle2 className="w-4 h-4" />
-                      <span>ትክክል ነው</span>
-                    </span>
+                    {d.status === 'pending' && (
+                      <span className="inline-flex items-center gap-1 text-xs font-bold text-amber-400">
+                        <Clock className="w-4 h-4" />
+                        <span>ፔንዲንግ — አድሚን እያረጋገጠ ነው</span>
+                      </span>
+                    )}
+                    {d.status === 'verified' && (
+                      <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-400">
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span>ትክክል ነው</span>
+                      </span>
+                    )}
+                    {d.status === 'rejected' && (
+                      <span className="inline-flex items-center gap-1 text-xs font-bold text-rose-400">
+                        <XCircle className="w-4 h-4" />
+                        <span>ውድቅ ተደርጓል</span>
+                      </span>
+                    )}
                   </div>
                   <div className="text-xs text-slate-400 flex flex-wrap gap-x-3 gap-y-1">
                     <span>TX: <strong className="font-mono-num text-slate-200">{d.txId}</strong></span>
                     <span>·</span>
                     <span>ከ: <strong className="font-mono-num text-slate-200">{d.playerPhone}</strong></span>
                   </div>
+                  {d.verifiedMessage && (
+                    <p className="text-[11px] text-slate-400">{d.verifiedMessage}</p>
+                  )}
                 </div>
               ))}
             </div>

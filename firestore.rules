@@ -212,7 +212,8 @@ service cloud.firestore {
       return data.keys().hasAll(['txId', 'uid', 'amount', 'createdAt'])
         && data.keys().hasOnly(['txId', 'uid', 'amount', 'createdAt'])
         && isValidTxId(data.txId) && data.txId == txId
-        && data.uid is string && data.uid == request.auth.uid && data.uid.size() <= 128
+        && data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128
+        && (data.uid == request.auth.uid || isAdmin())
         && data.amount is number && data.amount >= 100 && data.amount <= 500000
         && data.createdAt == request.time;
     }
@@ -232,17 +233,19 @@ service cloud.firestore {
 
     function isValidDeposit(data, depositId) {
       return data.keys().hasAll(['id', 'uid', 'playerName', 'playerPhone', 'systemPhone', 'txId', 'amount', 'status', 'verifiedMessage', 'createdAt'])
-        && data.keys().hasOnly(['id', 'uid', 'playerName', 'playerPhone', 'systemPhone', 'txId', 'amount', 'status', 'verifiedMessage', 'createdAt'])
+        && data.keys().hasOnly(['id', 'uid', 'playerName', 'playerPhone', 'systemPhone', 'txId', 'amount', 'status', 'verifiedMessage', 'processedBy', 'createdAt', 'updatedAt'])
         && isValidTxId(data.id) && data.id == depositId
         && isValidTxId(data.txId) && data.txId == depositId
-        && data.uid is string && data.uid == request.auth.uid && data.uid.size() <= 128
+        && data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128
         && data.playerName is string && data.playerName.size() >= 1 && data.playerName.size() <= 80
         && isValidPhone(data.playerPhone)
         && isValidPhone(data.systemPhone)
         && data.amount is number && data.amount >= 100 && data.amount <= 500000
-        && data.status == 'verified'
+        && data.status in ['pending', 'verified', 'rejected']
         && data.verifiedMessage is string && data.verifiedMessage.size() >= 2 && data.verifiedMessage.size() <= 120
-        && data.createdAt == request.time;
+        && (!('processedBy' in data) || isValidId(data.processedBy))
+        && (!('updatedAt' in data) || data.updatedAt is timestamp)
+        && data.createdAt is timestamp;
     }
 
     function isValidWithdrawal(data, withdrawalId) {
@@ -589,6 +592,24 @@ service cloud.firestore {
             && incoming().lastActionType == 'refund'
             && incoming().diff(existing()).affectedKeys().hasOnly(['balance', 'totalWithdrawn', 'lastActionType', 'lastActionRef', 'updatedAt'])
           ) ||
+          // Action 1b: Admin Approves Pending Telebirr Deposit & Credits Player Wallet
+          (
+            isAdmin()
+            && incoming().lastActionType == 'deposit'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['balance', 'hasDeposited', 'totalDeposited', 'lastActionType', 'lastActionRef', 'updatedAt'])
+            && isValidTxId(incoming().lastActionRef)
+            && exists(/databases/$(database)/documents/deposits/$(incoming().lastActionRef))
+            && get(/databases/$(database)/documents/deposits/$(incoming().lastActionRef)).data.status == 'pending'
+            && get(/databases/$(database)/documents/deposits/$(incoming().lastActionRef)).data.uid == userId
+            && existsAfter(/databases/$(database)/documents/deposits/$(incoming().lastActionRef))
+            && getAfter(/databases/$(database)/documents/deposits/$(incoming().lastActionRef)).data.status == 'verified'
+            && incoming().balance >= existing().balance + get(/databases/$(database)/documents/deposits/$(incoming().lastActionRef)).data.amount - 0.01
+            && incoming().balance <= existing().balance + get(/databases/$(database)/documents/deposits/$(incoming().lastActionRef)).data.amount + 0.01
+            && incoming().totalDeposited >= existing().totalDeposited + get(/databases/$(database)/documents/deposits/$(incoming().lastActionRef)).data.amount - 0.01
+            && incoming().totalDeposited <= existing().totalDeposited + get(/databases/$(database)/documents/deposits/$(incoming().lastActionRef)).data.amount + 0.01
+            && incoming().totalWithdrawn == existing().totalWithdrawn
+            && incoming().hasDeposited == true
+          ) ||
           // Action 2: Atomic Player Deposit
           (
             isOwner(userId)
@@ -598,6 +619,7 @@ service cloud.firestore {
             && !exists(/databases/$(database)/documents/deposits/$(incoming().lastActionRef))
             && existsAfter(/databases/$(database)/documents/deposits/$(incoming().lastActionRef))
             && getAfter(/databases/$(database)/documents/deposits/$(incoming().lastActionRef)).data.uid == userId
+            && getAfter(/databases/$(database)/documents/deposits/$(incoming().lastActionRef)).data.status == 'verified'
             && getAfter(/databases/$(database)/documents/deposits/$(incoming().lastActionRef)).data.amount >= 100
             && incoming().balance >= existing().balance + getAfter(/databases/$(database)/documents/deposits/$(incoming().lastActionRef)).data.amount - 0.01
             && incoming().balance <= existing().balance + getAfter(/databases/$(database)/documents/deposits/$(incoming().lastActionRef)).data.amount + 0.01
@@ -739,7 +761,9 @@ service cloud.firestore {
       allow create: if isValidTxId(txId)
         && isVerifiedUser()
         && isValidUsedTxId(incoming(), txId)
-        && existsAfter(/databases/$(database)/documents/deposits/$(txId));
+        && (isAdmin() || incoming().uid == request.auth.uid)
+        && existsAfter(/databases/$(database)/documents/deposits/$(txId))
+        && getAfter(/databases/$(database)/documents/deposits/$(txId)).data.status == 'verified';
       allow update, delete: if false;
     }
 
@@ -800,10 +824,30 @@ service cloud.firestore {
       allow create: if isValidTxId(depositId)
         && isVerifiedUser()
         && isValidDeposit(incoming(), depositId)
+        && incoming().uid == request.auth.uid
+        && incoming().createdAt == request.time
         && exists(/databases/$(database)/documents/users/$(request.auth.uid))
-        && existsAfter(/databases/$(database)/documents/usedTxIds/$(depositId))
-        && !exists(/databases/$(database)/documents/usedTxIds/$(depositId));
-      allow update, delete: if false;
+        && !exists(/databases/$(database)/documents/usedTxIds/$(depositId))
+        && (
+          (incoming().status == 'verified' && existsAfter(/databases/$(database)/documents/usedTxIds/$(depositId))) ||
+          (incoming().status == 'pending' && !('processedBy' in incoming()) && !('updatedAt' in incoming()))
+        );
+      allow update: if isValidTxId(depositId)
+        && isAdmin()
+        && isValidDeposit(incoming(), depositId)
+        && existing().status == 'pending'
+        && incoming().status in ['verified', 'rejected']
+        && incoming().uid == existing().uid
+        && incoming().id == existing().id
+        && incoming().txId == existing().txId
+        && incoming().amount == existing().amount
+        && incoming().playerPhone == existing().playerPhone
+        && incoming().systemPhone == existing().systemPhone
+        && incoming().createdAt == existing().createdAt
+        && incoming().processedBy == request.auth.uid
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'verifiedMessage', 'processedBy', 'updatedAt']);
+      allow delete: if false;
     }
 
     // 6. Telebirr Withdrawals
