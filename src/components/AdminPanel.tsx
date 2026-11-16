@@ -620,7 +620,270 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         </div>
       </div>
 
-      {/* 1. Admin Game Logo Upload & Branding */}
+      {/* 1. Pending Withdrawals Approval Queue (Prominent at Top) */}
+      <section className="bg-slate-900/95 border border-amber-500/35 rounded-3xl p-5 sm:p-6 space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-amber-500/15 text-amber-400 flex items-center justify-center">
+              <KeyRound className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="text-lg font-extrabold text-white">
+                በመጠባበቅ ላይ ያሉ የዊዝድሮው ጥያቄዎች ({pendingQueue.length} Pending Withdrawals)
+              </h2>
+              <p className="text-xs text-slate-400">
+                ተጫዋቾች የቴሌብር ቁጥራቸውን አስገብተው ዊዝድሮው ሲጠይቁ እዚህ ይታያሉ — "Approve" ሲጫኑ ስቴተሱ ወደ paid ተቀይሮ በLedger ይመዘገባል
+              </p>
+            </div>
+          </div>
+          {pendingQueue.length > 0 && (
+            <span className="px-3 py-1 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300 text-xs font-mono-num font-black">
+              ጠቅላላ: {formatETB(totals.pendingSum)}
+            </span>
+          )}
+        </div>
+
+        {pendingQueue.length === 0 ? (
+          <div className="py-8 text-center text-slate-500 text-sm">
+            በአሁኑ ጊዜ በመጠባበቅ ላይ ያለ የዊዝድሮው ጥያቄ የለም።
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {pendingQueue.map((w, index) => {
+              const isSelected = selectedWithdrawalId === w.id;
+              const isProcessing = processingId === w.id;
+              const createdLabel = w.createdAt?.toDate?.()?.toLocaleString?.() || 'አሁን';
+
+              return (
+                <div
+                  key={w.id}
+                  className={`rounded-2xl border p-4 transition ${
+                    isSelected
+                      ? 'bg-slate-950 border-emerald-500'
+                      : 'bg-slate-950/75 border-slate-800 hover:border-slate-700'
+                  }`}
+                >
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="space-y-1">
+                      <div className="flex flex-wrap items-center gap-2.5">
+                        <span className="font-mono-num text-xs font-black text-amber-400">
+                          #{index + 1}
+                        </span>
+                        <span className="font-bold text-white">{w.playerName}</span>
+                        <span className="font-mono-num text-sm font-bold text-emerald-300">
+                          ቴሌብር: {w.playerPhone}
+                        </span>
+                        <span className="font-mono-num text-base font-black text-amber-400">
+                          {formatETB(w.amount)}
+                        </span>
+                        <span className="text-[11px] font-bold text-amber-300/90">
+                          (Status: {w.status})
+                        </span>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-3 text-xs">
+                        {w.systemVerified ? (
+                          <span className="inline-flex items-center gap-1.5 font-extrabold text-emerald-400">
+                            <CheckCircle2 className="w-4 h-4" />
+                            <span>ትክክል ነው — ሲስተሙ አረጋግጧል</span>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 font-bold text-amber-300">
+                            <Clock className="w-4 h-4" />
+                            <span>{w.systemVerifiedText}</span>
+                          </span>
+                        )}
+                        <span className="text-slate-500">·</span>
+                        <span className="text-slate-400">
+                          ከሲስተም: <strong className="font-mono-num">{w.sourceSystemPhone}</strong>
+                        </span>
+                        <span className="text-slate-500">·</span>
+                        <span className="text-slate-500 font-mono-num">{createdLabel}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2 shrink-0">
+                      {!w.systemVerified && (
+                        <button
+                          type="button"
+                          disabled={isProcessing}
+                          onClick={() => handleManualVerify(w.id)}
+                          className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-xs font-bold text-emerald-400 transition cursor-pointer whitespace-nowrap"
+                        >
+                          ትክክለኛነት አረጋግጥ
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        disabled={isProcessing}
+                        onClick={() => handleApproveWithdrawal(w)}
+                        className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 text-xs font-black flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap"
+                      >
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span>{isProcessing ? 'በማጽደቅ ላይ...' : 'Approve · አጽድቅ (Paid)'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isProcessing}
+                        onClick={() => {
+                          setSelectedWithdrawalId(isSelected ? null : w.id);
+                          setTelebirrPin('');
+                        }}
+                        className={`px-3.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer whitespace-nowrap ${
+                          isSelected
+                            ? 'bg-slate-800 text-slate-300'
+                            : 'bg-slate-900 hover:bg-slate-800 border border-slate-700 text-amber-300'
+                        }`}
+                      >
+                        {isSelected ? 'ዝጋ' : 'በPIN / መልስ'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {isSelected && (
+                    <div className="mt-4 pt-4 border-t border-slate-800 space-y-3">
+                      {!w.systemVerified ? (
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <p className="text-xs font-bold text-amber-400">
+                            በPIN ከመላክዎ በፊት "ትክክለኛነት አረጋግጥ" ይጫኑ ወይም ቀጥታ "Approve" / "መልስ" ይጠቀሙ።
+                          </p>
+                          <button
+                            type="button"
+                            disabled={isProcessing}
+                            onClick={() => handleReject(w)}
+                            className="px-4 py-2.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/40 text-rose-300 font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer whitespace-nowrap"
+                          >
+                            <RotateCcw className="w-4 h-4" />
+                            <span>መልስ (Refund)</span>
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-end">
+                          <div className="flex-1">
+                            <label className="block text-xs font-bold text-emerald-400 mb-1.5">
+                              የቴሌብር ሚስጥር ቁጥር (Telebirr Secret Code) ያስገቡ — {formatETB(w.amount)} ወደ {w.playerPhone}
+                            </label>
+                            <input
+                              type="password"
+                              inputMode="numeric"
+                              maxLength={6}
+                              value={telebirrPin}
+                              onChange={(e) => setTelebirrPin(e.target.value.replace(/\D/g, ''))}
+                              placeholder="••••••"
+                              className="w-full bg-slate-900 border border-emerald-500/50 focus:border-emerald-400 rounded-xl px-4 py-2.5 text-lg font-mono-num tracking-widest text-white outline-none"
+                            />
+                          </div>
+
+                          <button
+                            type="button"
+                            disabled={isProcessing || telebirrPin.length < 4}
+                            onClick={() => handleCompleteWithPin(w)}
+                            className="px-5 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 font-black text-sm flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap"
+                          >
+                            <ShieldCheck className="w-4 h-4" />
+                            <span>{isProcessing ? 'በመላክ ላይ...' : 'ሚስጥር ቁጥር አረጋግጥና ብር ላክ'}</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            disabled={isProcessing}
+                            onClick={() => handleReject(w)}
+                            className="px-4 py-3 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/40 text-rose-300 font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer whitespace-nowrap"
+                          >
+                            <RotateCcw className="w-4 h-4" />
+                            <span>መልስ (Refund)</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      {/* 1B. Pending Deposits Approval Queue */}
+      <section className="bg-slate-900/95 border border-emerald-500/30 rounded-3xl p-5 sm:p-6 space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-emerald-500/15 text-emerald-400 flex items-center justify-center">
+              <ArrowDownLeft className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="text-lg font-extrabold text-white">
+                በመጠባበቅ ላይ ያሉ ዲፖሲቶች ({pendingDeposits.length} Pending Deposits)
+              </h2>
+              <p className="text-xs text-slate-400">
+                ተጫዋቾች በስልክዎ ቴሌብር ላይ ብር ልከው Transaction ID ሲያስገቡ እዚህ ይታያል — በስልክዎ SMS አረጋግጠው አጽድቁላቸው
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {pendingDeposits.length === 0 ? (
+          <div className="py-6 text-center text-slate-500 text-sm">
+            በአሁኑ ጊዜ የአድሚን ማረጋገጫ የሚጠብቅ ዲፖሲት የለም።
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {pendingDeposits.map((dep, index) => {
+              const isBusy = processingDepositId === dep.id;
+              return (
+                <div
+                  key={dep.id}
+                  className="rounded-2xl border border-amber-500/35 bg-slate-950/80 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                >
+                  <div className="space-y-1">
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      <span className="font-mono-num text-xs font-black text-amber-400">
+                        #{index + 1}
+                      </span>
+                      <span className="font-bold text-white">{dep.playerName}</span>
+                      <span className="font-mono-num text-xs font-bold text-slate-300">
+                        {dep.playerPhone}
+                      </span>
+                      <span className="font-mono-num text-sm font-black text-amber-300">
+                        TX: {dep.txId}
+                      </span>
+                      <span className="font-mono-num text-base font-black text-emerald-400">
+                        +{formatETB(dep.amount)}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-400">
+                      ወደ ስልክዎ <strong className="font-mono-num text-slate-200">{dep.systemPhone}</strong> · የቴሌብር SMS ከደረሰዎት &quot;አጽድቅ&quot; ይጫኑ
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      disabled={isBusy}
+                      onClick={() => handleApprovePendingDeposit(dep)}
+                      className="px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 font-black text-xs flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap"
+                    >
+                      <CheckCircle2 className="w-4 h-4" />
+                      <span>{isBusy ? 'በማጽደቅ ላይ...' : 'ትክክል ነው — አጽድቅና ሂሳብ ሙላ'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isBusy}
+                      onClick={() => handleRejectPendingDeposit(dep)}
+                      className="px-3.5 py-2.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/40 text-rose-300 font-bold text-xs flex items-center gap-1 transition cursor-pointer whitespace-nowrap"
+                    >
+                      <XCircle className="w-4 h-4" />
+                      <span>ውድቅ</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      {/* 2. Admin Game Logo Upload & Branding */}
       <section className="bg-slate-900/95 border border-slate-800 rounded-3xl p-5 sm:p-6 space-y-5">
         <div className="flex items-center gap-3 border-b border-slate-800 pb-4">
           <GameLogo logoUrl={logoInput || branding?.logoDataUrl} size="md" />
@@ -1184,247 +1447,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </button>
           </div>
         </form>
-      </section>
-
-      {/* 3A. Pending Deposits Approval Queue (When sent to Admin Personal Phone without Auto-Webhook) */}
-      <section className="bg-slate-900/95 border border-emerald-500/30 rounded-3xl p-5 sm:p-6 space-y-5">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-emerald-500/15 text-emerald-400 flex items-center justify-center">
-              <ArrowDownLeft className="w-5 h-5" />
-            </div>
-            <div>
-              <h2 className="text-lg font-extrabold text-white">
-                በመጠባበቅ ላይ ያሉ ዲፖሲቶች ({pendingDeposits.length} Pending Deposits)
-              </h2>
-              <p className="text-xs text-slate-400">
-                ተጫዋቾች በስልክዎ ቴሌብር ላይ ብር ልከው Transaction ID ሲያስገቡ እዚህ ይታያል — በስልክዎ SMS አረጋግጠው አጽድቁላቸው
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {pendingDeposits.length === 0 ? (
-          <div className="py-8 text-center text-slate-500 text-sm">
-            በአሁኑ ጊዜ የአድሚን ማረጋገጫ የሚጠብቅ ዲፖሲት የለም።
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {pendingDeposits.map((dep, index) => {
-              const isBusy = processingDepositId === dep.id;
-              return (
-                <div
-                  key={dep.id}
-                  className="rounded-2xl border border-amber-500/35 bg-slate-950/80 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-                >
-                  <div className="space-y-1">
-                    <div className="flex flex-wrap items-center gap-2.5">
-                      <span className="font-mono-num text-xs font-black text-amber-400">
-                        #{index + 1}
-                      </span>
-                      <span className="font-bold text-white">{dep.playerName}</span>
-                      <span className="font-mono-num text-xs font-bold text-slate-300">
-                        {dep.playerPhone}
-                      </span>
-                      <span className="font-mono-num text-sm font-black text-amber-300">
-                        TX: {dep.txId}
-                      </span>
-                      <span className="font-mono-num text-base font-black text-emerald-400">
-                        +{formatETB(dep.amount)}
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-400">
-                      ወደ ስልክዎ <strong className="font-mono-num text-slate-200">{dep.systemPhone}</strong> · የቴሌብር SMS ከደረሰዎት &quot;አጽድቅ&quot; ይጫኑ
-                    </p>
-                  </div>
-
-                  <div className="flex items-center gap-2 shrink-0">
-                    <button
-                      type="button"
-                      disabled={isBusy}
-                      onClick={() => handleApprovePendingDeposit(dep)}
-                      className="px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 font-black text-xs flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap"
-                    >
-                      <CheckCircle2 className="w-4 h-4" />
-                      <span>{isBusy ? 'በማጽደቅ ላይ...' : 'ትክክል ነው — አጽድቅና ሂሳብ ሙላ'}</span>
-                    </button>
-                    <button
-                      type="button"
-                      disabled={isBusy}
-                      onClick={() => handleRejectPendingDeposit(dep)}
-                      className="px-3.5 py-2.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/40 text-rose-300 font-bold text-xs flex items-center gap-1 transition cursor-pointer whitespace-nowrap"
-                    >
-                      <XCircle className="w-4 h-4" />
-                      <span>ውድቅ</span>
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </section>
-
-      {/* 3. Sequential Pending Withdrawals Queue */}
-      <section className="bg-slate-900/95 border border-slate-800 rounded-3xl p-5 sm:p-6 space-y-5">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-amber-500/15 text-amber-400 flex items-center justify-center">
-              <KeyRound className="w-5 h-5" />
-            </div>
-            <div>
-              <h2 className="text-lg font-extrabold text-white">
-                ዊዝድሮው የጠየቁ ተጫዋቾች ({pendingQueue.length} ፔንዲንግ)
-              </h2>
-              <p className="text-xs text-slate-400">
-                ሲስተሙ "ትክክል ነው" ብሎ አረንጓዴ ሲያሳይ በየተራ ክሊክ እያደረጉ የቴሌብር ሚስጥር ቁጥርዎን (Secret Code) ያስገቡ
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {pendingQueue.length === 0 ? (
-          <div className="py-10 text-center text-slate-500 text-sm">
-            በአሁኑ ጊዜ በመጠባበቅ ላይ ያለ የዊዝድሮው ጥያቄ የለም።
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {pendingQueue.map((w, index) => {
-              const isSelected = selectedWithdrawalId === w.id;
-              const isProcessing = processingId === w.id;
-
-              return (
-                <div
-                  key={w.id}
-                  className={`rounded-2xl border p-4 transition ${
-                    isSelected
-                      ? 'bg-slate-950 border-emerald-500'
-                      : 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
-                  }`}
-                >
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div className="space-y-1">
-                      <div className="flex flex-wrap items-center gap-2.5">
-                        <span className="font-mono-num text-xs font-black text-amber-400">
-                          #{index + 1}
-                        </span>
-                        <span className="font-bold text-white">{w.playerName}</span>
-                        <span className="font-mono-num text-sm font-bold text-slate-300">
-                          {w.playerPhone}
-                        </span>
-                        <span className="font-mono-num text-base font-black text-amber-400">
-                          {formatETB(w.amount)}
-                        </span>
-                      </div>
-
-                      <div className="flex flex-wrap items-center gap-3 text-xs">
-                        {w.systemVerified ? (
-                          <span className="inline-flex items-center gap-1.5 font-extrabold text-emerald-400">
-                            <CheckCircle2 className="w-4 h-4" />
-                            <span>ትክክል ነው — ሲስተሙ አረጋግጧል</span>
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1.5 font-bold text-amber-300">
-                            <Clock className="w-4 h-4" />
-                            <span>{w.systemVerifiedText}</span>
-                          </span>
-                        )}
-                        <span className="text-slate-500">·</span>
-                        <span className="text-slate-400">
-                          ከሲስተም ቴሌብር: <strong className="font-mono-num">{w.sourceSystemPhone}</strong>
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-2 shrink-0">
-                      {!w.systemVerified && (
-                        <button
-                          type="button"
-                          disabled={isProcessing}
-                          onClick={() => handleManualVerify(w.id)}
-                          className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-xs font-bold text-emerald-400 transition cursor-pointer whitespace-nowrap"
-                        >
-                          ትክክለኛነት አረጋግጥ
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        disabled={isProcessing}
-                        onClick={() => handleApproveWithdrawal(w)}
-                        className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 text-xs font-black flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap"
-                      >
-                        <CheckCircle2 className="w-4 h-4" />
-                        <span>{isProcessing ? 'በማጽደቅ ላይ...' : 'Approve · አጽድቅ (Paid)'}</span>
-                      </button>
-                      <button
-                        type="button"
-                        disabled={isProcessing}
-                        onClick={() => {
-                          setSelectedWithdrawalId(isSelected ? null : w.id);
-                          setTelebirrPin('');
-                        }}
-                        className={`px-3.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer whitespace-nowrap ${
-                          isSelected
-                            ? 'bg-slate-800 text-slate-300'
-                            : 'bg-slate-900 hover:bg-slate-800 border border-slate-700 text-amber-300'
-                        }`}
-                      >
-                        {isSelected ? 'ዝጋ' : 'በPIN / መልስ'}
-                      </button>
-                    </div>
-                  </div>
-
-                  {isSelected && (
-                    <div className="mt-4 pt-4 border-t border-slate-800 space-y-3">
-                      {!w.systemVerified ? (
-                        <p className="text-xs font-bold text-amber-400">
-                          እባክዎ መጀመሪያ ሲስተሙ "ትክክል ነው" ብሎ እስኪያረጋግጥ ይጠብቁ ወይም "ትክክለኛነት አረጋግጥ" የሚለውን ይጫኑ።
-                        </p>
-                      ) : (
-                        <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-end">
-                          <div className="flex-1">
-                            <label className="block text-xs font-bold text-emerald-400 mb-1.5">
-                              የቴሌብር ሚስጥር ቁጥር (Telebirr Secret Code) ያስገቡ — {formatETB(w.amount)} ወደ {w.playerPhone}
-                            </label>
-                            <input
-                              type="password"
-                              inputMode="numeric"
-                              maxLength={6}
-                              value={telebirrPin}
-                              onChange={(e) => setTelebirrPin(e.target.value.replace(/\D/g, ''))}
-                              placeholder="••••••"
-                              className="w-full bg-slate-900 border border-emerald-500/50 focus:border-emerald-400 rounded-xl px-4 py-2.5 text-lg font-mono-num tracking-widest text-white outline-none"
-                            />
-                          </div>
-
-                          <button
-                            type="button"
-                            disabled={isProcessing || telebirrPin.length < 4}
-                            onClick={() => handleCompleteWithPin(w)}
-                            className="px-5 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 font-black text-sm flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap"
-                          >
-                            <ShieldCheck className="w-4 h-4" />
-                            <span>{isProcessing ? 'በመላክ ላይ...' : 'ሚስጥር ቁጥር አረጋግጥና ብር ላክ'}</span>
-                          </button>
-
-                          <button
-                            type="button"
-                            disabled={isProcessing}
-                            onClick={() => handleReject(w)}
-                            className="px-4 py-3 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/40 text-rose-300 font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer whitespace-nowrap"
-                          >
-                            <RotateCcw className="w-4 h-4" />
-                            <span>መልስ (Refund)</span>
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
       </section>
 
       {/* 4. Complete Logs: Incoming Deposits, Outgoing Withdrawals & Income/Expense Ledger */}

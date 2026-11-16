@@ -82,11 +82,15 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
   const [withdrawPhone, setWithdrawPhone] = useState(registeredPhone || '');
   const [withdrawAmount, setWithdrawAmount] = useState('500');
   const [isSubmittingWithdraw, setIsSubmittingWithdraw] = useState(false);
+  const [withdrawFeedback, setWithdrawFeedback] = useState<{
+    type: 'success' | 'info' | 'error';
+    text: string;
+  } | null>(null);
 
   useEffect(() => {
     if (registeredPhone) {
       setDepositPhone((prev) => prev || registeredPhone);
-      setWithdrawPhone(registeredPhone);
+      setWithdrawPhone((prev) => prev || registeredPhone);
     }
   }, [registeredPhone]);
 
@@ -545,8 +549,34 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
 
   const handleWithdrawSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setWithdrawFeedback(null);
+
     if (!settings) {
-      onNotify('የሲስተም ቴሌብር መረጃ አልተገኘም።', 'error');
+      const msg = 'የሲስተም ቴሌብር መረጃ አልተገኘም።';
+      setWithdrawFeedback({ type: 'error', text: msg });
+      onNotify(msg, 'error');
+      return;
+    }
+
+    const cleanPhone = normalizePhone(withdrawPhone);
+    const numericAmount = parseFloat(withdrawAmount);
+
+    if (!PHONE_REGEX.test(cleanPhone)) {
+      const msg = 'እባክዎ ትክክለኛ የኢትዮጵያ ቴሌብር ስልክ ቁጥር ያስገቡ (09XXXXXXXX ወይም 07XXXXXXXX)።';
+      setWithdrawFeedback({ type: 'error', text: msg });
+      onNotify(msg, 'error');
+      return;
+    }
+    if (!Number.isFinite(numericAmount) || numericAmount < 500) {
+      const msg = 'ዝቅተኛው የዊዝድሮው መጠን 500 ብር ነው።';
+      setWithdrawFeedback({ type: 'error', text: msg });
+      onNotify(msg, 'error');
+      return;
+    }
+    if (numericAmount > wallet.balance) {
+      const msg = 'የጠየቁት መጠን ካለዎት ቀሪ ሂሳብ ይበልጣል።';
+      setWithdrawFeedback({ type: 'error', text: msg });
+      onNotify(msg, 'error');
       return;
     }
 
@@ -557,23 +587,25 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
         wallet,
         settings,
         registeredPhone,
-        rawPhone: withdrawPhone,
-        amount: parseFloat(withdrawAmount),
+        rawPhone: cleanPhone,
+        amount: numericAmount,
       });
 
-      onNotify('የዊዝድሮው ጥያቄ ተልኳል። ሲስተሙ ትክክለኛነቱን እያረጋገጠ ነው (Pending)...', 'info');
+      const pendingMsg = `የዊዝድሮው ጥያቄዎ (${formatETB(numericAmount)} ወደ ${cleanPhone}) በ'pending' ስቴተስ ወደ Firestore ተልኳል! አድሚኑ እንዳጸደቀው በቴሌብርዎ ይገባል።`;
+      setWithdrawFeedback({ type: 'success', text: pendingMsg });
+      onNotify(pendingMsg, 'success');
 
-      // System verifies deposit history & Telebirr phone integrity automatically
+      // System verifies wallet & withdrawal integrity automatically
       window.setTimeout(async () => {
         try {
           await runSystemWithdrawalVerification(withdrawalId);
-          onNotify('ሲስተሙ ትክክል ነው ብሎ አረጋግጧል! አሁን የአድሚን ሚስጥር ቁጥር በመጠበቅ ላይ ነው።', 'success');
         } catch {
           // Handled safely if admin already processed
         }
-      }, 1200);
+      }, 1000);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'የዊዝድሮው ጥያቄውን መላክ አልተቻለም።';
+      setWithdrawFeedback({ type: 'error', text: msg });
       onNotify(msg, 'error');
     } finally {
       setIsSubmittingWithdraw(false);
@@ -875,98 +907,185 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
       {/* WITHDRAW VIEW */}
       {subTab === 'withdraw' && (
         <section className="bg-slate-900/95 border border-slate-800 rounded-3xl p-5 sm:p-8 space-y-6">
-          <div className="border-b border-slate-800 pb-4">
-            <h2 className="text-xl font-extrabold text-white">በቴሌብር ብር ዊዝድሮው ያድርጉ</h2>
-            <p className="text-sm text-slate-400 mt-1">
-              ዝቅተኛው ዊዝድሮው 500 ብር ሲሆን መጀመሪያ ዲፖሲት ካደረጉበት ቴሌብር ላይ ብቻ ወደ እርስዎ ቴሌብር ይላካል።
-            </p>
+          <div className="border-b border-slate-800 pb-4 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-extrabold text-white">በቴሌብር ብር ዊዝድሮው ያድርጉ (Withdraw)</h2>
+              <p className="text-sm text-slate-400 mt-1">
+                ብሩን መቀበል የሚፈልጉበትን የቴሌብር ስልክ ቁጥር እና የብር መጠን አስገብተው ይጠይቁ። ጥያቄው በ<strong className="text-amber-300"> Pending</strong> ስቴተስ ወደ አድሚን ይላካል።
+              </p>
+            </div>
+            <div className="bg-slate-950 border border-slate-800 rounded-xl px-4 py-2 text-right">
+              <span className="text-[11px] text-slate-400 block">ያለዎት ቀሪ ሂሳብ</span>
+              <span className="font-mono-num text-base font-black text-amber-400">
+                {formatETB(wallet.balance)}
+              </span>
+            </div>
           </div>
 
-          {!wallet.hasDeposited || !registeredPhone ? (
-            <div className="p-5 rounded-2xl bg-slate-950 border border-amber-500/40 space-y-3">
-              <p className="text-sm font-bold text-amber-400">
-                መጀመሪያ ዲፖሲት ማድረግ ያስፈልጋል
-              </p>
-              <p className="text-sm text-slate-300">
-                ዊዝድሮው ለመጠየቅ መጀመሪያ በቴሌብር ቢያንስ 100 ብር ዲፖሲት ማድረግ አለብዎት። ሲያሸንፉ መጀመሪያ ዲፖሲት ካደረጉበት ቴሌብር ላይ መውሰድ ይችላሉ።
+          {!wallet.hasDeposited && (
+            <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/35 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <p className="text-xs sm:text-sm text-amber-200 font-semibold">
+                ማሳሰቢያ፡ ዝቅተኛው ዊዝድሮው 500 ብር ነው። በቴሌብር ዲፖሲት ማድረግ ከፈለጉ ወደ ዲፖሲት ክፍል መሄድ ይችላሉ።
               </p>
               <button
                 type="button"
                 onClick={() => setSubTab('deposit')}
-                className="px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-sm transition cursor-pointer"
+                className="shrink-0 px-3.5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs transition cursor-pointer"
               >
                 ወደ ዲፖሲት ሂድ
               </button>
             </div>
-          ) : (
-            <form onSubmit={handleWithdrawSubmit} className="space-y-4">
-              <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4 grid sm:grid-cols-2 gap-4 text-sm">
-                <div>
-                  <span className="text-xs text-slate-400 block">ብሩ የሚወጣበት የሲስተም ቴሌብር</span>
-                  <span className="font-mono-num font-bold text-slate-200">
-                    {settings?.withdrawalPhone || settings?.depositPhone || '—'}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-xs text-slate-400 block">መጀመሪያ ዲፖሲት ያደረጉበት የእርስዎ ቴሌብር</span>
-                  <span className="font-mono-num font-bold text-emerald-400">
-                    {registeredPhone}
-                  </span>
-                </div>
-              </div>
+          )}
 
-              <div className="grid sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-400 mb-1.5">
-                    የእርስዎ ቴሌብር ስልክ ቁጥር (ከመጀመሪያው ዲፖሲት ጋር ተመሳሳይ)
+          {withdrawFeedback && (
+            <div
+              className={`p-4 rounded-2xl border flex items-center gap-3 ${
+                withdrawFeedback.type === 'success'
+                  ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                  : withdrawFeedback.type === 'info'
+                    ? 'bg-amber-500/15 border-amber-500/40 text-amber-200'
+                    : 'bg-rose-500/15 border-rose-500/40 text-rose-300'
+              }`}
+            >
+              {withdrawFeedback.type === 'success' ? (
+                <CheckCircle2 className="w-6 h-6 text-emerald-400 shrink-0" />
+              ) : withdrawFeedback.type === 'info' ? (
+                <Clock className="w-6 h-6 text-amber-400 shrink-0" />
+              ) : (
+                <XCircle className="w-6 h-6 text-rose-400 shrink-0" />
+              )}
+              <p className="text-sm font-bold">{withdrawFeedback.text}</p>
+            </div>
+          )}
+
+          <form onSubmit={handleWithdrawSubmit} className="space-y-5">
+            <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4 grid sm:grid-cols-2 gap-4 text-sm">
+              <div>
+                <span className="text-xs text-slate-400 block">ብሩ የሚላክበት የሲስተም ቴሌብር</span>
+                <span className="font-mono-num font-bold text-slate-200">
+                  {settings?.withdrawalPhone || settings?.depositPhone || DEFAULT_TELEBIRR_PHONE}
+                </span>
+              </div>
+              <div>
+                <span className="text-xs text-slate-400 block">የዊዝድሮው ሁኔታ (Status)</span>
+                <span className="font-bold text-amber-400">
+                  Pending → አድሚን ሲያጸድቅ Paid
+                </span>
+              </div>
+            </div>
+
+            <div className="grid sm:grid-cols-2 gap-4">
+              <div>
+                <div className="flex items-center justify-between gap-2 mb-1.5">
+                  <label htmlFor="withdrawPhoneInput" className="block text-xs font-bold text-slate-300">
+                    የቴሌብር ስልክ ቁጥርዎ (ብሩ የሚገባበት)
                   </label>
+                  {registeredPhone && normalizePhone(withdrawPhone) !== registeredPhone && (
+                    <button
+                      type="button"
+                      onClick={() => setWithdrawPhone(registeredPhone)}
+                      className="text-[11px] font-bold text-emerald-400 hover:underline cursor-pointer"
+                    >
+                      የተመዘገበውን ተጠቀም ({registeredPhone})
+                    </button>
+                  )}
+                </div>
+                <div className="relative">
+                  <Phone className="w-4 h-4 text-amber-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                   <input
+                    id="withdrawPhoneInput"
                     type="tel"
                     required
+                    disabled={isSubmittingWithdraw}
                     value={withdrawPhone}
                     onChange={(e) => setWithdrawPhone(e.target.value)}
-                    placeholder={registeredPhone}
-                    className="w-full bg-slate-950 border border-slate-700 focus:border-amber-500 rounded-xl px-4 py-3 text-base font-mono-num text-white outline-none"
+                    placeholder="09XXXXXXXX"
+                    className="w-full bg-slate-950 border border-slate-700 focus:border-amber-500 rounded-xl pl-10 pr-4 py-3 text-base font-mono-num text-white outline-none"
                   />
                 </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-400 mb-1.5">
-                    የዊዝድሮው መጠን (ዝቅተኛ 500 ብር)
-                  </label>
-                  <div className="relative">
-                    <input
-                      type="number"
-                      required
-                      min={500}
-                      max={Math.floor(wallet.balance)}
-                      step={1}
-                      value={withdrawAmount}
-                      onChange={(e) => setWithdrawAmount(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-700 focus:border-amber-500 rounded-xl px-4 py-3 text-base font-mono-num text-white outline-none pr-12"
-                    />
-                    <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
-                      ብር
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-slate-400 mt-1">
-                    ያለዎት ቀሪ ሂሳብ: <span className="font-mono-num text-amber-400">{formatETB(wallet.balance)}</span>
-                  </p>
-                </div>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  ምሳሌ: 0927145171 ወይም 07XXXXXXXX — ትክክለኛ የቴሌብር ቁጥር ያስገቡ።
+                </p>
               </div>
 
-              <button
-                type="submit"
-                disabled={isSubmittingWithdraw || wallet.balance < 500}
-                className="w-full py-3.5 px-6 rounded-2xl bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-950 font-black text-base flex items-center justify-center gap-2 transition cursor-pointer"
-              >
-                <ArrowUpCircle className="w-5 h-5" />
-                <span>
-                  {isSubmittingWithdraw ? 'ጥያቄው እየተላከ ነው...' : 'ዊዝድሮው ጠይቅ'}
-                </span>
-              </button>
-            </form>
-          )}
+              <div>
+                <label htmlFor="withdrawAmountInput" className="block text-xs font-bold text-slate-300 mb-1.5">
+                  የዊዝድሮው መጠን (ዝቅተኛ 500 ብር)
+                </label>
+                <div className="relative">
+                  <input
+                    id="withdrawAmountInput"
+                    type="number"
+                    required
+                    disabled={isSubmittingWithdraw}
+                    min={500}
+                    max={Math.max(500, Math.floor(wallet.balance))}
+                    step={1}
+                    value={withdrawAmount}
+                    onChange={(e) => setWithdrawAmount(e.target.value)}
+                    placeholder="500"
+                    className="w-full bg-slate-950 border border-slate-700 focus:border-amber-500 rounded-xl px-4 py-3 text-base font-mono-num text-white outline-none pr-12"
+                  />
+                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
+                    ብር
+                  </span>
+                </div>
+
+                {/* Quick Amount Chips */}
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {[500, 1000, 2000, 5000].map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      disabled={isSubmittingWithdraw || wallet.balance < preset}
+                      onClick={() => setWithdrawAmount(String(preset))}
+                      className="px-2.5 py-1 rounded-lg bg-slate-950 hover:bg-slate-800 disabled:opacity-40 border border-slate-700 text-[11px] font-mono-num font-bold text-slate-200 cursor-pointer transition"
+                    >
+                      {preset.toLocaleString()}
+                    </button>
+                  ))}
+                  {wallet.balance >= 500 && (
+                    <button
+                      type="button"
+                      disabled={isSubmittingWithdraw}
+                      onClick={() => setWithdrawAmount(String(Math.floor(wallet.balance)))}
+                      className="px-2.5 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-[11px] font-bold text-amber-300 cursor-pointer transition"
+                    >
+                      ሁሉም ({Math.floor(wallet.balance).toLocaleString()})
+                    </button>
+                  )}
+                </div>
+
+                <p className="text-[11px] text-slate-400 mt-1.5">
+                  ያለዎት ቀሪ ሂሳብ:{' '}
+                  <span className="font-mono-num text-amber-400 font-bold">{formatETB(wallet.balance)}</span>
+                  {Number(withdrawAmount) >= 500 && Number(withdrawAmount) <= wallet.balance && (
+                    <>
+                      {' '}· ከተቀነሰ በኋላ:{' '}
+                      <span className="font-mono-num text-slate-200 font-bold">
+                        {formatETB(Math.max(0, wallet.balance - Number(withdrawAmount)))}
+                      </span>
+                    </>
+                  )}
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={isSubmittingWithdraw || wallet.balance < 500}
+              className="w-full py-3.5 px-6 rounded-2xl bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-950 font-black text-base flex items-center justify-center gap-2 transition cursor-pointer"
+            >
+              <ArrowUpCircle className="w-5 h-5" />
+              <span>
+                {isSubmittingWithdraw
+                  ? 'ጥያቄው በPending እየተላከ ነው...'
+                  : wallet.balance < 500
+                    ? 'ዊዝድሮው ለመጠየቅ ቢያንስ 500 ብር ቀሪ ሂሳብ ያስፈልጋል'
+                    : `ዊዝድሮው ጠይቅ (${withdrawAmount ? formatETB(Number(withdrawAmount) || 0) : '500 ብር'})`}
+              </span>
+            </button>
+          </form>
         </section>
       )}
 

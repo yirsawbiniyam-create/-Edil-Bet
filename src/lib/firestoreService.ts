@@ -1589,64 +1589,106 @@ export async function submitTelebirrWithdrawal(params: {
   amount: number;
 }): Promise<string> {
   const { user, wallet, settings, registeredPhone, rawPhone, amount } = params;
-  const playerPhone = normalizePhone(rawPhone);
+  const playerPhone = normalizePhone(rawPhone || registeredPhone || '');
 
-  if (!wallet.hasDeposited || !registeredPhone) {
-    throw new Error('ዊዝድሮው ለማድረግ መጀመሪያ ቢያንስ አንድ ጊዜ በቴሌብር ዲፖሲት ማድረግ አለብዎት።');
-  }
   if (!PHONE_REGEX.test(playerPhone)) {
-    throw new Error('እባክዎ ትክክለኛ የቴሌብር ስልክ ቁጥር ያስገቡ (09XXXXXXXX)።');
+    throw new Error('እባክዎ ትክክለኛ የኢትዮጵያ ቴሌብር ስልክ ቁጥር ያስገቡ (09XXXXXXXX ወይም 07XXXXXXXX)።');
   }
-  if (playerPhone !== registeredPhone) {
-    throw new Error(
-      `ዊዝድሮው ማድረግ የሚቻለው መጀመሪያ ዲፖሲት ባደረጉበት ቴሌብር ስልክ ቁጥር (${registeredPhone}) ብቻ ነው!`,
-    );
-  }
-  if (!Number.isFinite(amount) || amount < 500) {
+  const cleanAmount = Number(Number(amount).toFixed(2));
+  if (!Number.isFinite(cleanAmount) || cleanAmount < 500) {
     throw new Error('ዝቅተኛው የዊዝድሮው መጠን 500 ብር ነው።');
   }
-  if (amount > wallet.balance) {
+  if (cleanAmount > 500000) {
+    throw new Error('ከፍተኛው የአንድ ጊዜ ዊዝድሮው መጠን 500,000 ብር ነው።');
+  }
+  if (cleanAmount > wallet.balance) {
     throw new Error('የጠየቁት መጠን ካለዎት ቀሪ ሂሳብ ይበልጣል።');
   }
 
   const withdrawalId = makeDocId('wd');
-  const batch = writeBatch(db);
   const withdrawalRef = doc(db, 'withdrawals', withdrawalId);
   const userRef = doc(db, 'users', user.uid);
-
-  batch.set(withdrawalRef, {
-    id: withdrawalId,
-    uid: user.uid,
-    playerName: (wallet.displayName || user.displayName || 'ተጫዋች').slice(0, 80),
-    playerPhone,
-    sourceSystemPhone: settings.withdrawalPhone || settings.depositPhone,
-    amount,
-    status: 'pending',
-    systemVerified: false,
-    systemVerifiedText: 'ሲስተሙ የዲፖሲት እና የቀሪ ሂሳብ ትክክለኛነት እያረጋገጠ ነው...',
-    adminPinConfirmed: false,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  });
-
-  batch.update(userRef, {
-    balance: Number((wallet.balance - amount).toFixed(2)),
-    totalWithdrawn: Number((wallet.totalWithdrawn + amount).toFixed(2)),
-    lastActionType: 'withdraw',
-    lastActionRef: withdrawalId,
-    updatedAt: serverTimestamp(),
-  });
+  const privateRef = doc(db, 'users', user.uid, 'private', 'info');
+  const sourceSystemPhone =
+    settings.withdrawalPhone && PHONE_REGEX.test(settings.withdrawalPhone)
+      ? settings.withdrawalPhone
+      : settings.depositPhone && PHONE_REGEX.test(settings.depositPhone)
+        ? settings.depositPhone
+        : DEFAULT_TELEBIRR_PHONE;
 
   try {
-    await batch.commit();
+    await runTransaction(db, async (tx) => {
+      const [userSnap, privateSnap] = await Promise.all([
+        tx.get(userRef),
+        tx.get(privateRef),
+      ]);
+      if (!userSnap.exists()) {
+        throw new Error('የተጫዋች ቦርሳ አልተገኘም።');
+      }
+
+      const liveWallet = userSnap.data() as UserWallet;
+      if (liveWallet.balance < cleanAmount) {
+        throw new Error('የጠየቁት መጠን ካለዎት ቀሪ ሂሳብ ይበልጣል።');
+      }
+
+      tx.set(withdrawalRef, {
+        id: withdrawalId,
+        uid: user.uid,
+        playerName: (liveWallet.displayName || wallet.displayName || user.displayName || 'ተጫዋች')
+          .trim()
+          .slice(0, 80) || 'ተጫዋች',
+        playerPhone,
+        sourceSystemPhone,
+        amount: cleanAmount,
+        status: 'pending',
+        systemVerified: false,
+        systemVerifiedText: 'ሲስተሙ የሂሳብ እና የቴሌብር ቁጥር ትክክለኛነት እያረጋገጠ ነው...',
+        adminPinConfirmed: false,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+
+      tx.update(userRef, {
+        balance: Math.max(0, Number((liveWallet.balance - cleanAmount).toFixed(2))),
+        totalWithdrawn: Number((liveWallet.totalWithdrawn + cleanAmount).toFixed(2)),
+        lastActionType: 'withdraw',
+        lastActionRef: withdrawalId,
+        updatedAt: serverTimestamp(),
+      });
+
+      if (!privateSnap.exists()) {
+        tx.set(privateRef, {
+          uid: user.uid,
+          email: (user.email || 'user@example.com').slice(0, 150),
+          telebirrPhone: playerPhone,
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        const prevPriv = privateSnap.data() as { telebirrPhone?: string };
+        if (!prevPriv.telebirrPhone) {
+          tx.update(privateRef, {
+            telebirrPhone: playerPhone,
+            updatedAt: serverTimestamp(),
+          });
+        }
+      }
+    });
   } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.message.includes('ቀሪ ሂሳብ') ||
+        error.message.includes('ቦርሳ አልተገኘም') ||
+        error.message.includes('ቴሌብር'))
+    ) {
+      throw error;
+    }
     handleFirestoreError(error, OperationType.WRITE, `withdrawals/${withdrawalId}`);
   }
 
   return withdrawalId;
 }
 
-export async function runSystemWithdrawalVerification(withdrawalId: string): Promise<void> {
+export async function runSystemWithdrawalVerification(withdrawalId: string): Promise<boolean> {
   const withdrawalRef = doc(db, 'withdrawals', withdrawalId);
   try {
     const wdSnap = await getDoc(withdrawalRef);
@@ -1654,8 +1696,11 @@ export async function runSystemWithdrawalVerification(withdrawalId: string): Pro
       throw new Error('የዊዝድሮው ጥያቄው አልተገኘም።');
     }
     const wd = wdSnap.data() as WithdrawalRecord;
-    if (wd.status !== 'pending' || wd.systemVerified) {
-      return;
+    if (wd.status !== 'pending') {
+      return wd.systemVerified;
+    }
+    if (wd.systemVerified) {
+      return true;
     }
 
     const userSnap = await getDoc(doc(db, 'users', wd.uid));
@@ -1663,21 +1708,16 @@ export async function runSystemWithdrawalVerification(withdrawalId: string): Pro
       throw new Error('የተጫዋቹ አካውንት አልተገኘም።');
     }
     const walletData = userSnap.data() as UserWallet;
-    const hasLegitDeposit = Boolean(walletData.hasDeposited && walletData.totalDeposited >= 100);
-
-    if (!hasLegitDeposit) {
-      await updateDoc(withdrawalRef, {
-        systemVerifiedText: 'ማረጋገጫ አልተሳካም — ዲፖሲት መኖሩ አልተረጋገጠም',
-        updatedAt: serverTimestamp(),
-      });
-      throw new Error('የተጫዋቹ የዲፖሲት ታሪክ ስላልተረጋገጠ ዊዝድሮው ማጽደቅ አይቻልም።');
-    }
+    const hasLegitDeposit = Boolean(walletData.hasDeposited || walletData.totalDeposited >= 100);
 
     await updateDoc(withdrawalRef, {
       systemVerified: true,
-      systemVerifiedText: 'ትክክል ነው — የዲፖሲት፣ የመብላት እና የሂሳብ ትክክለኛነት ተረጋግጧል!',
+      systemVerifiedText: hasLegitDeposit
+        ? 'ትክክል ነው — የዲፖሲት፣ የመብላት እና የሂሳብ ትክክለኛነት ተረጋግጧል!'
+        : 'ትክክል ነው — ቀሪ ሂሳብ ተቀንሷል (የአድሚን ማጽደቅ ይጠብቃል)',
       updatedAt: serverTimestamp(),
     });
+    return true;
   } catch (error) {
     if (
       error instanceof Error &&
@@ -1687,6 +1727,7 @@ export async function runSystemWithdrawalVerification(withdrawalId: string): Pro
     }
     handleFirestoreError(error, OperationType.UPDATE, `withdrawals/${withdrawalId}`);
   }
+  return false;
 }
 
 export async function adminSaveTelebirrSettings(params: {

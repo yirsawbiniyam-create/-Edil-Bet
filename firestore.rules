@@ -646,17 +646,19 @@ service cloud.firestore {
           // Action 4: Atomic Player Withdrawal Hold
           (
             isOwner(userId)
-            && existing().hasDeposited == true
             && incoming().lastActionType == 'withdraw'
             && incoming().diff(existing()).affectedKeys().hasOnly(['balance', 'totalWithdrawn', 'lastActionType', 'lastActionRef', 'updatedAt'])
             && isValidId(incoming().lastActionRef)
             && !exists(/databases/$(database)/documents/withdrawals/$(incoming().lastActionRef))
             && existsAfter(/databases/$(database)/documents/withdrawals/$(incoming().lastActionRef))
             && getAfter(/databases/$(database)/documents/withdrawals/$(incoming().lastActionRef)).data.uid == userId
+            && getAfter(/databases/$(database)/documents/withdrawals/$(incoming().lastActionRef)).data.status == 'pending'
             && getAfter(/databases/$(database)/documents/withdrawals/$(incoming().lastActionRef)).data.amount >= 500
             && getAfter(/databases/$(database)/documents/withdrawals/$(incoming().lastActionRef)).data.amount <= existing().balance
-            && incoming().balance == existing().balance - getAfter(/databases/$(database)/documents/withdrawals/$(incoming().lastActionRef)).data.amount
-            && incoming().totalWithdrawn == existing().totalWithdrawn + getAfter(/databases/$(database)/documents/withdrawals/$(incoming().lastActionRef)).data.amount
+            && incoming().balance >= existing().balance - getAfter(/databases/$(database)/documents/withdrawals/$(incoming().lastActionRef)).data.amount - 0.01
+            && incoming().balance <= existing().balance - getAfter(/databases/$(database)/documents/withdrawals/$(incoming().lastActionRef)).data.amount + 0.01
+            && incoming().totalWithdrawn >= existing().totalWithdrawn + getAfter(/databases/$(database)/documents/withdrawals/$(incoming().lastActionRef)).data.amount - 0.01
+            && incoming().totalWithdrawn <= existing().totalWithdrawn + getAfter(/databases/$(database)/documents/withdrawals/$(incoming().lastActionRef)).data.amount + 0.01
             && incoming().totalDeposited == existing().totalDeposited
             && incoming().hasDeposited == existing().hasDeposited
           ) ||
@@ -876,10 +878,10 @@ service cloud.firestore {
         && !('processedBy' in incoming())
         && incoming().createdAt == request.time
         && exists(/databases/$(database)/documents/users/$(request.auth.uid))
-        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.hasDeposited == true
         && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.balance >= incoming().amount
-        && exists(/databases/$(database)/documents/users/$(request.auth.uid)/private/info)
-        && get(/databases/$(database)/documents/users/$(request.auth.uid)/private/info).data.telebirrPhone == incoming().playerPhone;
+        && existsAfter(/databases/$(database)/documents/users/$(request.auth.uid))
+        && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.lastActionType == 'withdraw'
+        && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.lastActionRef == withdrawalId;
 
       allow update: if isValidId(withdrawalId)
         && isValidWithdrawal(incoming(), withdrawalId)

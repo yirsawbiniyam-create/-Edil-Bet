@@ -324,17 +324,56 @@ export default function App() {
       (error) => handleFirestoreError(error, OperationType.LIST, 'deposits'),
     );
 
-    const unsubWithdrawals = onSnapshot(
-      accountPhone
-        ? query(collection(db, 'withdrawals'), where('playerPhone', '==', accountPhone), limit(100))
-        : query(collection(db, 'withdrawals'), where('uid', '==', user.uid), limit(50)),
+    const withdrawalBuckets = {
+      current: [] as WithdrawalRecord[],
+      primary: [] as WithdrawalRecord[],
+      phone: [] as WithdrawalRecord[],
+    };
+    const syncMergedWithdrawals = () => {
+      const byId = new Map<string, WithdrawalRecord>();
+      for (const w of [
+        ...withdrawalBuckets.current,
+        ...withdrawalBuckets.primary,
+        ...withdrawalBuckets.phone,
+      ]) {
+        byId.set(w.id, w);
+      }
+      const merged = Array.from(byId.values());
+      merged.sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
+      setMyWithdrawals(merged.slice(0, 100));
+    };
+
+    const unsubWithdrawalsCurrent = onSnapshot(
+      query(collection(db, 'withdrawals'), where('uid', '==', user.uid), limit(50)),
       (snap) => {
-        const list = snap.docs.map((d) => d.data() as WithdrawalRecord);
-        list.sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
-        setMyWithdrawals(list);
+        withdrawalBuckets.current = snap.docs.map((d) => d.data() as WithdrawalRecord);
+        syncMergedWithdrawals();
       },
       (error) => handleFirestoreError(error, OperationType.LIST, 'withdrawals'),
     );
+
+    const unsubWithdrawalsPhone = accountPhone
+      ? onSnapshot(
+          query(collection(db, 'withdrawals'), where('playerPhone', '==', accountPhone), limit(80)),
+          (snap) => {
+            withdrawalBuckets.phone = snap.docs.map((d) => d.data() as WithdrawalRecord);
+            syncMergedWithdrawals();
+          },
+          (error) => handleFirestoreError(error, OperationType.LIST, 'withdrawals'),
+        )
+      : null;
+
+    const unsubWithdrawalsPrimary =
+      wallet?.primaryUid && wallet.primaryUid !== user.uid
+        ? onSnapshot(
+            query(collection(db, 'withdrawals'), where('uid', '==', wallet.primaryUid), limit(50)),
+            (snap) => {
+              withdrawalBuckets.primary = snap.docs.map((d) => d.data() as WithdrawalRecord);
+              syncMergedWithdrawals();
+            },
+            (error) => handleFirestoreError(error, OperationType.LIST, 'withdrawals'),
+          )
+        : null;
 
     // Merge bets across active UID, phone owner records, and original primaryUid (if recovered)
     const betsBuckets = {
@@ -479,7 +518,9 @@ export default function App() {
       unsubWallet();
       unsubPrivate();
       unsubDeposits();
-      unsubWithdrawals();
+      unsubWithdrawalsCurrent();
+      unsubWithdrawalsPhone?.();
+      unsubWithdrawalsPrimary?.();
       unsubBetsCurrent();
       unsubBetsPhone?.();
       unsubBetsPrimary?.();
