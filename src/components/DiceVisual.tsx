@@ -21,7 +21,10 @@ export const DiceVisual: React.FC<DiceVisualProps> = ({
   size = 'lg',
 }) => {
   const pips = DICE_LAYOUTS[value] || [5];
-  const sizeClass = size === 'lg' ? 'w-28 h-28 rounded-2xl' : 'w-22 h-22 sm:w-24 sm:h-24 rounded-2xl';
+  const sizeClass =
+    size === 'lg'
+      ? 'w-20 h-20 sm:w-28 sm:h-28 rounded-2xl'
+      : 'w-16 h-16 sm:w-24 sm:h-24 rounded-xl sm:rounded-2xl';
 
   return (
     <div className={`${sizeClass} dice-face transition-transform ${rolling ? 'animate-dice-roll' : ''}`}>

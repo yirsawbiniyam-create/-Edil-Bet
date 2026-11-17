@@ -518,21 +518,32 @@ export async function ensureUserWalletAndAdmin(
           depositPhone: DEFAULT_TELEBIRR_PHONE,
           withdrawalPhone: DEFAULT_TELEBIRR_PHONE,
           accountName: 'እድል ቤት · Edil Bet',
-          minDeposit: 100,
-          minWithdraw: 500,
+          minDeposit: 50,
+          minWithdraw: 0,
           houseWinRate: 0.28,
           updatedBy: user.uid,
           updatedAt: serverTimestamp(),
         });
       } else {
         const existingSettings = settingsSnap.data() as Partial<TelebirrSettings>;
-        if (existingSettings.depositPhone === '0911000000') {
-          await updateDoc(settingsRef, {
-            depositPhone: DEFAULT_TELEBIRR_PHONE,
+        if (
+          existingSettings.depositPhone === '0911000000' ||
+          existingSettings.minDeposit !== 50 ||
+          existingSettings.minWithdraw !== 0
+        ) {
+          await setDoc(settingsRef, {
+            depositPhone:
+              !existingSettings.depositPhone || existingSettings.depositPhone === '0911000000'
+                ? DEFAULT_TELEBIRR_PHONE
+                : existingSettings.depositPhone,
             withdrawalPhone:
               !existingSettings.withdrawalPhone || existingSettings.withdrawalPhone === '0911000000'
                 ? DEFAULT_TELEBIRR_PHONE
                 : existingSettings.withdrawalPhone,
+            accountName: existingSettings.accountName || 'እድል ቤት · Edil Bet',
+            minDeposit: 50,
+            minWithdraw: 0,
+            houseWinRate: existingSettings.houseWinRate ?? 0.28,
             updatedBy: user.uid,
             updatedAt: serverTimestamp(),
           });
@@ -967,8 +978,8 @@ export async function submitTelebirrDeposit(params: {
       ? Number(serverSmsCheck.amount.toFixed(2))
       : Number(amount);
 
-  if (!Number.isFinite(fallbackAmount) || fallbackAmount < 100) {
-    throw new Error('ዝቅተኛው የዲፖሲት መጠን 100 ብር ነው።');
+  if (!Number.isFinite(fallbackAmount) || fallbackAmount < 50) {
+    throw new Error('ዝቅተኛው የዲፖሲት መጠን 50 ብር ነው።');
   }
   if (fallbackAmount > 500000) {
     throw new Error('ከፍተኛው የአንድ ጊዜ ዲፖሲት 500,000 ብር ነው።');
@@ -1013,7 +1024,7 @@ export async function submitTelebirrDeposit(params: {
           throw new Error('ይህ የትራንዛክሽን ቁጥር ከዚህ በፊት ጥቅም ላይ ውሏል!');
         }
         const parsedSmsAmt = Number(smsData.amount);
-        if (!Number.isFinite(parsedSmsAmt) || parsedSmsAmt < 100 || parsedSmsAmt > 500000) {
+        if (!Number.isFinite(parsedSmsAmt) || parsedSmsAmt < 50 || parsedSmsAmt > 500000) {
           throw new Error('በSMS የተመዘገበው የብር መጠን ከተፈቀደው ገደብ ውጭ ነው።');
         }
         verifiedAmount = Number(parsedSmsAmt.toFixed(2));
@@ -1120,7 +1131,7 @@ export function parseTelebirrSmsMessage(
   if (!amountMatch || !txIdMatch) return null;
   const amount = Number(parseFloat(amountMatch[1].replace(/,/g, '')).toFixed(2));
   const transactionId = normalizeTxId(txIdMatch[1]);
-  if (!Number.isFinite(amount) || amount < 100 || amount > 500000) return null;
+  if (!Number.isFinite(amount) || amount < 50 || amount > 500000) return null;
   if (!TX_ID_REGEX.test(transactionId)) return null;
   return { transactionId, amount };
 }
@@ -1132,7 +1143,7 @@ export async function adminRecordSimulatedTelebirrSms(params: {
   const parsed = parseTelebirrSmsMessage(message);
   if (!parsed) {
     throw new Error(
-      'የቴሌብር SMS ቅርጽ ትክክል አይደለም (ETB/ብር መጠን 100-500,000 እና transaction number/የግብይት ቁጥር ያካትቱ)።',
+      'የቴሌብር SMS ቅርጽ ትክክል አይደለም (ETB/ብር መጠን 50-500,000 እና transaction number/የግብይት ቁጥር ያካትቱ)።',
     );
   }
   const { transactionId, amount } = parsed;
@@ -1171,8 +1182,8 @@ export async function adminRecordManualTelebirrTx(params: {
   if (!TX_ID_REGEX.test(transactionId)) {
     throw new Error('ትራንሳክሽን አይዲው ከ 6 እስከ 24 ፊደል ወይም ቁጥር መሆን አለበት (ምሳሌ: DKF27VX4V6)።');
   }
-  if (!Number.isFinite(amount) || amount < 100 || amount > 500000) {
-    throw new Error('የብር መጠኑ ከ 100 እስከ 500,000 ብር መሆን አለበት።');
+  if (!Number.isFinite(amount) || amount < 50 || amount > 500000) {
+    throw new Error('የብር መጠኑ ከ 50 እስከ 500,000 ብር መሆን አለበት።');
   }
 
   const smsRef = doc(db, 'received_sms_transactions', transactionId);
@@ -1207,7 +1218,7 @@ export async function adminSyncWebhookSmsBatch(
     if (item.status !== 'unused') continue;
     const txId = normalizeTxId(item.transaction_id);
     const amount = Number(Number(item.amount).toFixed(2));
-    if (!TX_ID_REGEX.test(txId) || !Number.isFinite(amount) || amount < 100 || amount > 500000) {
+    if (!TX_ID_REGEX.test(txId) || !Number.isFinite(amount) || amount < 50 || amount > 500000) {
       continue;
     }
     try {
@@ -1255,8 +1266,8 @@ export async function submitPendingTelebirrDeposit(params: {
   if (!TX_ID_REGEX.test(txId)) {
     throw new Error('ትራንሳክሽን አይዲው ትክክል አይደለም (ከ6 እስከ 24 ፊደል ወይም ቁጥር ይሁን)።');
   }
-  if (!Number.isFinite(cleanAmount) || cleanAmount < 100 || cleanAmount > 500000) {
-    throw new Error('የዲፖሲት መጠን ቢያንስ 100 ብር (እስከ 500,000 ብር) መሆን አለበት።');
+  if (!Number.isFinite(cleanAmount) || cleanAmount < 50 || cleanAmount > 500000) {
+    throw new Error('የዲፖሲት መጠን ቢያንስ 50 ብር (እስከ 500,000 ብር) መሆን አለበት።');
   }
 
   const depositRef = doc(db, 'deposits', txId);
@@ -1595,8 +1606,8 @@ export async function submitTelebirrWithdrawal(params: {
     throw new Error('እባክዎ ትክክለኛ የኢትዮጵያ ቴሌብር ስልክ ቁጥር ያስገቡ (09XXXXXXXX ወይም 07XXXXXXXX)።');
   }
   const cleanAmount = Number(Number(amount).toFixed(2));
-  if (!Number.isFinite(cleanAmount) || cleanAmount < 500) {
-    throw new Error('ዝቅተኛው የዊዝድሮው መጠን 500 ብር ነው።');
+  if (!Number.isFinite(cleanAmount) || cleanAmount <= 0) {
+    throw new Error('እባክዎ ትክክለኛ የዊዝድሮው መጠን ያስገቡ (ከ0 ብር በላይ)።');
   }
   if (cleanAmount > 500000) {
     throw new Error('ከፍተኛው የአንድ ጊዜ ዊዝድሮው መጠን 500,000 ብር ነው።');
@@ -1708,7 +1719,7 @@ export async function runSystemWithdrawalVerification(withdrawalId: string): Pro
       throw new Error('የተጫዋቹ አካውንት አልተገኘም።');
     }
     const walletData = userSnap.data() as UserWallet;
-    const hasLegitDeposit = Boolean(walletData.hasDeposited || walletData.totalDeposited >= 100);
+    const hasLegitDeposit = Boolean(walletData.hasDeposited || walletData.totalDeposited >= 50);
 
     await updateDoc(withdrawalRef, {
       systemVerified: true,
@@ -1759,8 +1770,8 @@ export async function adminSaveTelebirrSettings(params: {
       depositPhone: depPhone,
       withdrawalPhone: wdrPhone,
       accountName: name,
-      minDeposit: 100,
-      minWithdraw: 500,
+      minDeposit: 50,
+      minWithdraw: 0,
       houseWinRate: rate,
       updatedBy: params.adminUid,
       updatedAt: serverTimestamp(),

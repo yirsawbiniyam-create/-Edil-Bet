@@ -1,10 +1,15 @@
 import React, { useMemo, useState } from 'react';
 import {
+  ArrowDownLeft,
+  ArrowUpRight,
   Banknote,
   BarChart3,
   CheckCircle2,
+  ChevronDown,
   Clock,
+  Filter,
   Flame,
+  Gamepad2,
   History,
   Radio,
   Scale,
@@ -16,15 +21,19 @@ import {
 } from 'lucide-react';
 import { formatETB } from '../lib/gameEngine';
 import { useLanguage } from '../lib/i18n';
-import { BetRecord, FootballTicket } from '../types';
+import { BetRecord, DepositRecord, FootballTicket, WithdrawalRecord } from '../types';
 
 interface HistoryPanelProps {
   bets: BetRecord[];
   tickets?: FootballTicket[];
+  deposits?: DepositRecord[];
+  withdrawals?: WithdrawalRecord[];
 }
 
+type ActivityFilter = 'all' | 'deposits' | 'withdrawals' | 'bets';
+
 type ChartMode = 'trend' | 'byGame';
-type GameGroupKey = 'all' | 'football' | 'dice' | 'coin' | 'lucky';
+type GameGroupKey = 'all' | 'football' | 'chicken' | 'dice' | 'coin' | 'lucky';
 
 interface SettledOutcome {
   id: string;
@@ -61,6 +70,7 @@ function getGameGroup(gameType: BetRecord['gameType']): {
   label: string;
 } {
   if (gameType === 'football') return { key: 'football', label: 'እግር ኳስ ቤቲንግ' };
+  if (gameType === 'chicken') return { key: 'chicken', label: 'ዶሮ ዝላይ (Chicken Jump)' };
   if (gameType === 'coin') return { key: 'coin', label: 'የሳንቲም ውርርድ' };
   if (gameType === 'lucky') return { key: 'lucky', label: 'የእድል ቁጥር (1-20)' };
   return { key: 'dice', label: 'የዳይስ ጨዋታ' };
@@ -72,8 +82,43 @@ function formatWinLossRatio(wins: number, losses: number): string {
   return (wins / losses).toFixed(2);
 }
 
-export const HistoryPanel: React.FC<HistoryPanelProps> = ({ bets, tickets = [] }) => {
+function formatActivityTimestamp(ms: number): string {
+  if (!ms) return '—';
+  try {
+    return new Date(ms).toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return '—';
+  }
+}
+
+interface UnifiedHistoryItem {
+  id: string;
+  category: Exclude<ActivityFilter, 'all'>;
+  title: string;
+  reference: string;
+  amount: number;
+  statusLabel: string;
+  statusTone: 'emerald' | 'amber' | 'rose' | 'sky';
+  detailText: string;
+  netText: string;
+  netTone: 'emerald' | 'amber' | 'rose' | 'sky';
+  timestampMs: number;
+  won?: boolean;
+}
+
+export const HistoryPanel: React.FC<HistoryPanelProps> = ({
+  bets,
+  tickets = [],
+  deposits = [],
+  withdrawals = [],
+}) => {
   const { bi } = useLanguage();
+  const [activityFilter, setActivityFilter] = useState<ActivityFilter>('all');
   const [filter, setFilter] = useState<'all' | 'wins' | 'losses'>('all');
   const [ticketFilter, setTicketFilter] = useState<'all' | 'live' | 'settled'>('all');
   const [ratioGameFilter, setRatioGameFilter] = useState<GameGroupKey>('all');
@@ -197,6 +242,7 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({ bets, tickets = [] }
 
   const perGameRatioRows = useMemo(() => {
     const groups: Array<{ key: Exclude<GameGroupKey, 'all'>; labelAm: string; labelEn: string }> = [
+      { key: 'chicken', labelAm: 'ዶሮ ዝላይ (Chicken Jump)', labelEn: 'Chicken Jump' },
       { key: 'football', labelAm: 'እግር ኳስ ቤቲንግ', labelEn: 'Football Betting' },
       { key: 'dice', labelAm: 'የዳይስ ጨዋታ', labelEn: 'Dice Games' },
       { key: 'coin', labelAm: 'የሳንቲም ውርርድ', labelEn: 'Coin Toss' },
@@ -308,15 +354,107 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({ bets, tickets = [] }
     return Array.from(map.values()).sort((a, b) => b.wagered - a.wagered);
   }, [bets]);
 
-  const filtered = useMemo(
-    () =>
-      bets.filter((b) => {
-        if (filter === 'wins') return b.won;
-        if (filter === 'losses') return !b.won;
-        return true;
-      }),
-    [bets, filter],
-  );
+  const unifiedActivities = useMemo<UnifiedHistoryItem[]>(() => {
+    const items: UnifiedHistoryItem[] = [];
+
+    for (const d of deposits) {
+      const ts = d.createdAt?.toMillis?.() || d.updatedAt?.toMillis?.() || 0;
+      const statusLabel =
+        d.status === 'verified'
+          ? bi('ተረጋግጧል · Verified', 'Verified')
+          : d.status === 'pending'
+          ? bi('በመጠባበቅ ላይ · Pending', 'Pending')
+          : bi('ውድቅ ተደርጓል · Rejected', 'Rejected');
+      const statusTone: UnifiedHistoryItem['statusTone'] =
+        d.status === 'verified' ? 'emerald' : d.status === 'pending' ? 'amber' : 'rose';
+
+      items.push({
+        id: `deposit:${d.id}`,
+        category: 'deposits',
+        title: bi('የቴሌብር ዲፖሲት', 'Telebirr Deposit'),
+        reference: d.txId ? `TX: ${d.txId}` : d.playerPhone,
+        amount: d.amount,
+        statusLabel,
+        statusTone,
+        detailText: d.verifiedMessage || `${bi('ከስልክ', 'From')}: ${d.playerPhone}`,
+        netText:
+          d.status === 'rejected'
+            ? formatETB(d.amount)
+            : `+${formatETB(d.amount)}`,
+        netTone: d.status === 'verified' ? 'emerald' : d.status === 'pending' ? 'amber' : 'rose',
+        timestampMs: ts,
+      });
+    }
+
+    for (const w of withdrawals) {
+      const ts = w.createdAt?.toMillis?.() || w.updatedAt?.toMillis?.() || 0;
+      const isCompleted = w.status === 'paid' || w.status === 'completed';
+      const statusLabel = isCompleted
+        ? bi('ተከፍሏል · Paid', 'Paid')
+        : w.status === 'pending'
+        ? bi('በመጠባበቅ ላይ · Pending', 'Pending')
+        : bi('ውድቅ ተደርጓል · Rejected', 'Rejected');
+      const statusTone: UnifiedHistoryItem['statusTone'] = isCompleted
+        ? 'sky'
+        : w.status === 'pending'
+        ? 'amber'
+        : 'rose';
+
+      items.push({
+        id: `withdrawal:${w.id}`,
+        category: 'withdrawals',
+        title: bi('የቴሌብር ዊዝድሮው', 'Telebirr Withdrawal'),
+        reference: w.playerPhone ? `${bi('ወደ', 'To')}: ${w.playerPhone}` : `#${w.id.slice(0, 8)}`,
+        amount: w.amount,
+        statusLabel,
+        statusTone,
+        detailText:
+          w.systemVerifiedText ||
+          (w.status === 'pending'
+            ? bi('የአድሚን ማረጋገጫ በመጠባበቅ ላይ', 'Awaiting admin approval')
+            : `${bi('ወደ ቁጥር', 'To phone')}: ${w.playerPhone}`),
+        netText:
+          w.status === 'rejected'
+            ? formatETB(w.amount)
+            : `-${formatETB(w.amount)}`,
+        netTone: isCompleted ? 'sky' : w.status === 'pending' ? 'amber' : 'rose',
+        timestampMs: ts,
+      });
+    }
+
+    for (const b of bets) {
+      const ts = b.createdAt?.toMillis?.() || 0;
+      items.push({
+        id: `bet:${b.id}`,
+        category: 'bets',
+        title: b.gameName,
+        reference: b.choiceText || `${b.multiplier.toFixed(2)}x`,
+        amount: b.betAmount,
+        statusLabel: b.won ? bi('አሸንፏል · Won', 'Won') : bi('ተሸንፏል · Lost', 'Lost'),
+        statusTone: b.won ? 'emerald' : 'rose',
+        detailText: b.resultText,
+        netText: b.won ? `+${formatETB(b.payout)}` : `-${formatETB(b.betAmount)}`,
+        netTone: b.won ? 'emerald' : 'rose',
+        timestampMs: ts,
+        won: b.won,
+      });
+    }
+
+    return items.sort((a, b) => b.timestampMs - a.timestampMs);
+  }, [deposits, withdrawals, bets, bi]);
+
+  const filteredActivities = useMemo(() => {
+    return unifiedActivities.filter((item) => {
+      if (activityFilter !== 'all' && item.category !== activityFilter) {
+        return false;
+      }
+      if (activityFilter === 'bets') {
+        if (filter === 'wins') return Boolean(item.won);
+        if (filter === 'losses') return !item.won;
+      }
+      return true;
+    });
+  }, [unifiedActivities, activityFilter, filter]);
 
   // SVG Chart Geometry for Trend Line
   const chartGeometry = useMemo(() => {
@@ -429,6 +567,7 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({ bets, tickets = [] }
             {(
               [
                 ['all', bi('ሁሉም', 'All')],
+                ['chicken', bi('ዶሮ ዝላይ', 'Chicken')],
                 ['football', bi('እግር ኳስ', 'Football')],
                 ['dice', bi('ዳይስ', 'Dice')],
                 ['coin', bi('ሳንቲም', 'Coin')],
@@ -1352,79 +1491,180 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({ bets, tickets = [] }
         )}
       </section>
 
-      {/* Detailed Bet History Table */}
+      {/* Detailed Transaction & Bet History Table */}
       <section className="bg-slate-900/95 border border-slate-800 rounded-3xl p-5 sm:p-8 space-y-5">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-slate-800 flex items-center justify-center text-amber-400">
+            <div className="w-10 h-10 rounded-xl bg-slate-800 flex items-center justify-center text-amber-400 shrink-0">
               <History className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-lg sm:text-xl font-extrabold text-white">የጨዋታ ታሪክ (Firestore)</h2>
+              <h2 className="text-lg sm:text-xl font-extrabold text-white">
+                {bi('የግብይት እና የውርርድ ታሪክ (History)', 'Transaction & Bet History')}
+              </h2>
               <p className="text-xs text-slate-400">
-                ሁሉም የተጫወቷቸው ጨዋታዎች በፋየርስቶር ላይ የተመዘገቡ ናቸው
+                {bi(
+                  'ዲፖሲቶች፣ ዊዝድሮዎች እና ሁሉም ውርርዶች በአንድ ቦታ — በምድብ መለየት ይችላሉ',
+                  'Browse deposits, withdrawals, and bets from Firestore using the filter dropdown',
+                )}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-1 p-1 bg-slate-950 rounded-xl border border-slate-800">
-            {(
-              [
-                ['all', 'ሁሉም'],
-                ['wins', 'ያሸነፍኩት'],
-                ['losses', 'ያልተሳኩ'],
-              ] as const
-            ).map(([key, label]) => (
-              <button
-                key={key}
-                type="button"
-                onClick={() => setFilter(key)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer whitespace-nowrap ${
-                  filter === key
-                    ? 'bg-amber-500 text-slate-950'
-                    : 'text-slate-400 hover:text-white'
-                }`}
+          <div className="flex flex-wrap items-center gap-2.5">
+            {/* Primary Filter Dropdown: All / Deposits / Withdrawals / Bets */}
+            <div className="relative">
+              <label htmlFor="history-type-filter" className="sr-only">
+                {bi('የታሪክ አይነት ይምረጡ', 'Filter history by type')}
+              </label>
+              <Filter className="w-3.5 h-3.5 text-amber-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <select
+                id="history-type-filter"
+                value={activityFilter}
+                onChange={(e) => setActivityFilter(e.target.value as ActivityFilter)}
+                className="appearance-none bg-slate-950 border border-slate-700 hover:border-amber-500/70 focus:border-amber-400 focus:outline-none text-white text-xs sm:text-sm font-bold rounded-xl pl-9 pr-9 py-2 min-h-[38px] cursor-pointer transition"
               >
-                {label}
-              </button>
-            ))}
+                <option value="all">
+                  {bi('ሁሉም', 'All')} ({unifiedActivities.length})
+                </option>
+                <option value="deposits">
+                  {bi('ዲፖሲቶች', 'Deposits')} ({deposits.length})
+                </option>
+                <option value="withdrawals">
+                  {bi('ዊዝድሮዎች', 'Withdrawals')} ({withdrawals.length})
+                </option>
+                <option value="bets">
+                  {bi('ውርርዶች', 'Bets')} ({bets.length})
+                </option>
+              </select>
+              <ChevronDown className="w-4 h-4 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            </div>
+
+            {/* Secondary Win/Loss toggle when viewing Bets */}
+            {activityFilter === 'bets' && (
+              <div className="flex items-center gap-1 p-1 bg-slate-950 rounded-xl border border-slate-800">
+                {(
+                  [
+                    ['all', bi('ሁሉም', 'All')],
+                    ['wins', bi('ያሸነፍኩት', 'Wins')],
+                    ['losses', bi('ያልተሳኩ', 'Losses')],
+                  ] as const
+                ).map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setFilter(key)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer whitespace-nowrap ${
+                      filter === key
+                        ? 'bg-amber-500 text-slate-950'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
-        {filtered.length === 0 ? (
-          <div className="py-12 text-center text-slate-500 text-sm">
-            በዚህ ምድብ ውስጥ የተመዘገበ የጨዋታ ታሪክ የለም።
+        {filteredActivities.length === 0 ? (
+          <div className="py-12 text-center text-slate-400 text-sm">
+            {activityFilter === 'deposits'
+              ? bi('እስካሁን የተመዘገበ የዲፖሲት ታሪክ የለም።', 'No deposits found in your history yet.')
+              : activityFilter === 'withdrawals'
+              ? bi('እስካሁን የተመዘገበ የዊዝድሮው ታሪክ የለም።', 'No withdrawals found in your history yet.')
+              : activityFilter === 'bets'
+              ? bi('በዚህ ምድብ ውስጥ የተመዘገበ የውርርድ ታሪክ የለም።', 'No bets found matching this filter.')
+              : bi('እስካሁን የተመዘገበ የግብይት ወይም የውርርድ ታሪክ የለም።', 'No transactions or bets recorded yet.')}
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="text-xs font-bold text-slate-400 border-b border-slate-800">
-                  <th className="py-3 px-3">የጨዋታ አይነት</th>
-                  <th className="py-3 px-3">የተመደበ</th>
-                  <th className="py-3 px-3">ውጤት</th>
-                  <th className="py-3 px-3 text-right">ክፍያ / ትርፍ</th>
+                  <th className="py-3 px-3">{bi('አይነት', 'Type')}</th>
+                  <th className="py-3 px-3">{bi('ዝርዝር / ጨዋታ', 'Description')}</th>
+                  <th className="py-3 px-3">{bi('መጠን', 'Amount')}</th>
+                  <th className="py-3 px-3">{bi('ሁኔታ / ውጤት', 'Status / Result')}</th>
+                  <th className="py-3 px-3 text-right">{bi('የሂሳብ ለውጥ', 'Net / Payout')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/70 text-xs sm:text-sm">
-                {filtered.map((item) => (
-                  <tr key={item.id} className="hover:bg-slate-800/40 transition">
-                    <td className="py-3 px-3 font-bold text-slate-200 whitespace-nowrap">
-                      {item.gameName}
-                    </td>
-                    <td className="py-3 px-3 font-mono-num text-slate-300 whitespace-nowrap">
-                      {formatETB(item.betAmount)}
-                    </td>
-                    <td className="py-3 px-3 text-slate-400">{item.resultText}</td>
-                    <td
-                      className={`py-3 px-3 text-right font-mono-num font-extrabold whitespace-nowrap ${
-                        item.won ? 'text-emerald-400' : 'text-rose-400'
-                      }`}
-                    >
-                      {item.won ? `+${formatETB(item.payout)}` : `-${formatETB(item.betAmount)}`}
-                    </td>
-                  </tr>
-                ))}
+                {filteredActivities.map((item) => {
+                  const categoryBadge =
+                    item.category === 'deposits' ? (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-bold whitespace-nowrap">
+                        <ArrowDownLeft className="w-3.5 h-3.5 shrink-0" />
+                        <span>{bi('ዲፖሲት', 'Deposit')}</span>
+                      </span>
+                    ) : item.category === 'withdrawals' ? (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-sky-500/10 border border-sky-500/30 text-sky-300 text-xs font-bold whitespace-nowrap">
+                        <ArrowUpRight className="w-3.5 h-3.5 shrink-0" />
+                        <span>{bi('ዊዝድሮው', 'Withdrawal')}</span>
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-bold whitespace-nowrap">
+                        <Gamepad2 className="w-3.5 h-3.5 shrink-0" />
+                        <span>{bi('ውርርድ', 'Bet')}</span>
+                      </span>
+                    );
+
+                  const statusClass =
+                    item.statusTone === 'emerald'
+                      ? 'text-emerald-400'
+                      : item.statusTone === 'amber'
+                      ? 'text-amber-300'
+                      : item.statusTone === 'sky'
+                      ? 'text-sky-300'
+                      : 'text-rose-400';
+
+                  const netClass =
+                    item.netTone === 'emerald'
+                      ? 'text-emerald-400'
+                      : item.netTone === 'amber'
+                      ? 'text-amber-300'
+                      : item.netTone === 'sky'
+                      ? 'text-sky-300'
+                      : 'text-rose-400';
+
+                  return (
+                    <tr key={item.id} className="hover:bg-slate-800/40 transition">
+                      <td className="py-3 px-3 align-top whitespace-nowrap">
+                        <div className="space-y-1">
+                          {categoryBadge}
+                          <div className="text-[11px] font-mono-num text-slate-500">
+                            {formatActivityTimestamp(item.timestampMs)}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="py-3 px-3 align-top">
+                        <div className="font-bold text-slate-100 whitespace-nowrap">
+                          {item.title}
+                        </div>
+                        <div className="text-[11px] text-slate-400 font-mono-num mt-0.5 truncate max-w-[220px]">
+                          {item.reference}
+                        </div>
+                      </td>
+                      <td className="py-3 px-3 align-top font-mono-num text-slate-200 whitespace-nowrap font-semibold">
+                        {formatETB(item.amount)}
+                      </td>
+                      <td className="py-3 px-3 align-top">
+                        <div className={`text-xs font-bold ${statusClass}`}>
+                          {item.statusLabel}
+                        </div>
+                        <div className="text-xs text-slate-400 mt-0.5 max-w-[280px]">
+                          {item.detailText}
+                        </div>
+                      </td>
+                      <td
+                        className={`py-3 px-3 align-top text-right font-mono-num font-extrabold whitespace-nowrap ${netClass}`}
+                      >
+                        {item.netText}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

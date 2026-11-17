@@ -98,8 +98,8 @@ import {
   UserWallet,
 } from '../types';
 
-export type SportsSection = 'sport' | 'upcoming' | 'live' | 'cashout';
-type FootballSubTab = 'fixtures' | 'live' | 'rules';
+export type SportsSection = 'sport' | 'upcoming' | 'live' | 'cashout' | 'promos';
+type FootballSubTab = 'betting' | 'live' | 'promos';
 
 interface SlipPick {
   match: ScheduledMatch;
@@ -196,7 +196,7 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
 }) => {
   const { lang, bi } = useLanguage();
 
-  const [subTab, setSubTab] = useState<FootballSubTab>('fixtures');
+  const [subTab, setSubTab] = useState<FootballSubTab>('betting');
   const [timeframeFilter, setTimeframeFilter] = useState<TimeframeBucket>('all');
   const [dayFilter, setDayFilter] = useState<'all' | string>('all');
   const [tierFilter, setTierFilter] = useState<'all' | LeagueTier>('all');
@@ -211,9 +211,8 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
   const [mobileSlipOpen, setMobileSlipOpen] = useState<boolean>(false);
 
   // Expandable table controls ("Show more v")
-  const [leagueLimit, setLeagueLimit] = useState<number>(6);
-  const [liveLimit, setLiveLimit] = useState<number>(7);
-  const [popularLimit, setPopularLimit] = useState<number>(10);
+  const [liveLimit, setLiveLimit] = useState<number>(15);
+  const [popularLimit, setPopularLimit] = useState<number>(25);
 
   const [scheduleMatches, setScheduleMatches] = useState<ScheduledMatch[]>([]);
   const [scheduleLoaded, setScheduleLoaded] = useState<boolean>(false);
@@ -258,22 +257,18 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
   const realResultMatchIdsRef = useRef<Set<string>>(new Set());
   const scheduleMatchesRef = useRef<ScheduledMatch[]>(scheduleMatches);
   scheduleMatchesRef.current = scheduleMatches;
-  const topMatchesRef = useRef<HTMLElement | null>(null);
-  const liveEventsRef = useRef<HTMLElement | null>(null);
 
-  // Sync top green bar section ('sport' | 'upcoming' | 'live' | 'cashout')
+  // Sync top section ('sport' | 'upcoming' | 'live' | 'cashout' | 'promos') into 3 clean Football tabs
   useEffect(() => {
-    if (sportsSection === 'cashout') {
+    if (sportsSection === 'live' || sportsSection === 'cashout') {
       setSubTab('live');
-    } else if (sportsSection === 'live') {
-      setSubTab('fixtures');
-      setTimeframeFilter('live');
-      setOnlyMyBets(false);
+    } else if (sportsSection === 'promos') {
+      setSubTab('promos');
     } else if (sportsSection === 'upcoming') {
-      setSubTab('fixtures');
+      setSubTab('betting');
       setTimeframeFilter('all');
     } else {
-      setSubTab('fixtures');
+      setSubTab('betting');
       if (timeframeFilter === 'live') setTimeframeFilter('all');
     }
   }, [sportsSection]);
@@ -368,7 +363,7 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
     Boolean(marketsMatchId) ||
     mobileSlipOpen ||
     checkBetOpen ||
-    subTab !== 'fixtures';
+    subTab !== 'betting';
   const pushedHistoryRef = useRef(false);
 
   useEffect(() => {
@@ -396,8 +391,8 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
         setMobileSlipOpen(false);
       } else if (checkBetOpen) {
         setCheckBetOpen(false);
-      } else if (subTab !== 'fixtures') {
-        setSubTab('fixtures');
+      } else if (subTab !== 'betting') {
+        setSubTab('betting');
         onChangeSportsSection?.('sport');
       }
       pushedHistoryRef.current = false;
@@ -1554,85 +1549,8 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
           selectedPick ? 'bg-emerald-50/70' : 'bg-white hover:bg-slate-50'
         }`}
       >
-        {/* PHONE-FIRST COMPACT STACKED LAYOUT (<640px, safe on all narrow/tall phone ratios) */}
-        <div className="sm:hidden p-2.5 space-y-2">
-          <div className="flex items-center justify-between gap-2 text-[11px]">
-            <div className="flex items-center gap-1.5 min-w-0">
-              {isLiveMode || match.isLive ? (
-                <span className="font-mono-num font-black text-[#0E8A38] shrink-0">
-                  {match.liveMinute && match.liveMinute <= 45
-                    ? `1H ${match.liveMinute}'`
-                    : `2H ${match.liveMinute || 60}'`}{' '}
-                  ({match.liveHomeGoals ?? 0}-{match.liveAwayGoals ?? 0})
-                </span>
-              ) : (
-                <span className="font-mono-num font-bold text-slate-700 shrink-0">
-                  {extractCompactTime(match.kickoffLabel)}
-                </span>
-              )}
-              <span className="text-slate-300">·</span>
-              <span className="font-semibold text-slate-500 truncate">{match.leagueLabel}</span>
-            </div>
-
-            <div className="flex items-center gap-1.5 shrink-0">
-              {(isLiveMode || match.isLive) && (
-                <button
-                  type="button"
-                  onClick={() => openMatchLiveVideo(match)}
-                  title={bi('በቪድዮ ይመልከቱ', 'Watch Live Video')}
-                  className="min-h-[36px] px-2 rounded bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-black flex items-center gap-1 cursor-pointer transition"
-                >
-                  <Tv className="w-3.5 h-3.5" />
-                  <span>{bi('ቪድዮ', 'Live TV')}</span>
-                </button>
-              )}
-              {!match.isLive && !isLiveMode && (
-                <button
-                  type="button"
-                  onClick={() => void toggleRemindMatch(match)}
-                  title={bi('ከ15 ደቂቃ በፊት አስታውሰኝ', 'Remind me 15m before kickoff')}
-                  aria-pressed={remindMatchSet.has(match.id)}
-                  className={`min-h-[36px] px-2 rounded border text-[10px] font-extrabold flex items-center gap-1 cursor-pointer transition ${
-                    remindMatchSet.has(match.id)
-                      ? 'bg-amber-50 border-amber-400 text-amber-800'
-                      : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-600'
-                  }`}
-                >
-                  {remindMatchSet.has(match.id) ? (
-                    <BellRing className="w-3.5 h-3.5 text-amber-600" />
-                  ) : (
-                    <Bell className="w-3.5 h-3.5" />
-                  )}
-                  <span>{remindMatchSet.has(match.id) ? bi('ነቅቷል', 'Set') : bi('አስታውሰኝ', 'Remind')}</span>
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => {
-                  playGameSound('click', soundEnabled);
-                  setStatsMatchId(match.id);
-                }}
-                title={bi('ስታትስ (H2H · Form · Table)', 'Match Statistics')}
-                className="min-h-[36px] px-2 rounded bg-slate-100 hover:bg-[#EAF3ED] border border-slate-200 text-[#0E8A38] text-[10px] font-black flex items-center gap-1 cursor-pointer"
-              >
-                <BarChart3 className="w-3.5 h-3.5" />
-                <span>Stats</span>
-              </button>
-              <button
-                type="button"
-                disabled={placingTicket || isLiveLocked}
-                onClick={() => {
-                  playGameSound('click', soundEnabled);
-                  setMarketsMatchId(match.id);
-                }}
-                title={bi('135+ ገበያዎችን ክፈት', 'Open 135+ Markets')}
-                className="min-h-[36px] px-2 rounded bg-slate-100 hover:bg-[#9AD84B]/40 border border-slate-200 text-[10px] font-mono-num font-black text-[#0E8A38] flex items-center justify-center cursor-pointer disabled:opacity-45"
-              >
-                +135
-              </button>
-            </div>
-          </div>
-
+        {/* HIGH-DENSITY MOBILE ROW (<640px) — fits 7-9+ matches per screen */}
+        <div className="sm:hidden px-2 py-1.5 flex items-center justify-between gap-1.5 min-h-[58px]">
           <button
             type="button"
             disabled={placingTicket || isLiveLocked}
@@ -1640,32 +1558,41 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
               playGameSound('click', soundEnabled);
               setMarketsMatchId(match.id);
             }}
-            className="w-full text-left group cursor-pointer disabled:cursor-not-allowed space-y-0.5"
+            className="flex-1 min-w-0 pr-1 text-left group cursor-pointer disabled:cursor-not-allowed"
           >
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-[13px] font-extrabold text-slate-900 group-hover:text-[#0E8A38] truncate">
-                {match.home}
-              </span>
-              {match.featured && <Zap className="w-3 h-3 text-[#0E8A38] shrink-0" />}
+            <div className="flex items-center gap-1 text-[10px] leading-tight">
+              {isLiveMode || match.isLive ? (
+                <span className="font-mono-num font-black text-[#0E8A38] shrink-0">
+                  {match.liveMinute && match.liveMinute <= 45
+                    ? `${match.liveMinute}'`
+                    : `${match.liveMinute || 60}'`}{' '}
+                  ({match.liveHomeGoals ?? 0}-{match.liveAwayGoals ?? 0})
+                </span>
+              ) : (
+                <span className="font-mono-num font-bold text-slate-600 shrink-0">
+                  {extractCompactTime(match.kickoffLabel)}
+                </span>
+              )}
+              <span className="text-slate-300 shrink-0">·</span>
+              <span className="font-semibold text-slate-500 truncate">{match.leagueLabel}</span>
+              {userBetInfo && (
+                <span className="font-black text-[#0E8A38] shrink-0">★</span>
+              )}
+              {hasCustomMarket && selectedPick && (
+                <span className="font-extrabold text-amber-700 truncate shrink-0 max-w-[70px]">
+                  · {selectedPick.odd.toFixed(2)}
+                </span>
+              )}
             </div>
-            <div className="text-[13px] font-semibold text-slate-700 truncate">{match.away}</div>
-            {(userBetInfo || hasCustomMarket) && (
-              <div className="flex flex-wrap items-center gap-1.5 text-[10px] pt-0.5">
-                {userBetInfo && (
-                  <span className="font-bold text-[#0E8A38]">
-                    {bi('የተወራረዱበት', 'My Bet')}: {userBetInfo.latestMarketLabel}
-                  </span>
-                )}
-                {hasCustomMarket && selectedPick && (
-                  <span className="font-bold text-amber-700">
-                    {getMarketLabel(selectedPick.market)} ({selectedPick.odd.toFixed(2)})
-                  </span>
-                )}
-              </div>
-            )}
+            <div className="text-[12px] font-extrabold text-slate-900 group-hover:text-[#0E8A38] truncate leading-tight mt-0.5">
+              {match.home}
+            </div>
+            <div className="text-[11.5px] font-semibold text-slate-600 truncate leading-tight">
+              {match.away}
+            </div>
           </button>
 
-          <div className="grid grid-cols-3 gap-1.5">
+          <div className="shrink-0 flex items-center gap-1">
             {(['1', 'X', '2'] as const).map((mkt) => {
               const active = selectedPick?.market === mkt;
               return (
@@ -1675,7 +1602,7 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
                   disabled={placingTicket || isLiveLocked}
                   onClick={() => togglePick(match, mkt)}
                   aria-label={`${match.home} vs ${match.away} ${mkt}`}
-                  className={`min-h-[44px] px-2 rounded-lg text-xs font-mono-num flex items-center justify-between gap-1 transition cursor-pointer disabled:cursor-not-allowed ${
+                  className={`w-[43px] min-h-[42px] px-0.5 rounded-md font-mono-num tabular-nums flex flex-col items-center justify-center leading-none transition cursor-pointer disabled:cursor-not-allowed ${
                     isLiveLocked
                       ? 'bg-[#E5E7EB] text-slate-400'
                       : active
@@ -1683,15 +1610,45 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
                         : 'bg-[#E5E7EB] hover:bg-slate-300 text-slate-900 font-bold'
                   }`}
                 >
-                  <span className="text-[10px] opacity-75">{mkt}</span>
+                  <span className={`text-[9px] mb-0.5 ${active ? 'text-[#9AD84B]' : 'text-slate-500'}`}>
+                    {mkt}
+                  </span>
                   {isLiveLocked ? (
-                    <Lock className="w-3.5 h-3.5 text-slate-400" />
+                    <Lock className="w-3 h-3 text-slate-400" />
                   ) : (
-                    <span className="font-black">{getScaledOdd(match.odds[mkt]).toFixed(2)}</span>
+                    <span className="text-[11.5px] font-black">
+                      {getScaledOdd(match.odds[mkt]).toFixed(2)}
+                    </span>
                   )}
                 </button>
               );
             })}
+
+            {(isLiveMode || match.isLive) && (
+              <button
+                type="button"
+                onClick={() => openMatchLiveVideo(match)}
+                title={bi('በቪድዮ ይመልከቱ', 'Watch Live Video')}
+                aria-label={bi('በቪድዮ ይመልከቱ', 'Watch Live Video')}
+                className="w-[30px] min-h-[42px] rounded-md bg-rose-600 hover:bg-rose-700 text-white flex items-center justify-center cursor-pointer transition"
+              >
+                <Tv className="w-3.5 h-3.5" />
+              </button>
+            )}
+
+            <button
+              type="button"
+              disabled={placingTicket || isLiveLocked}
+              onClick={() => {
+                playGameSound('click', soundEnabled);
+                setMarketsMatchId(match.id);
+              }}
+              title={bi('135+ ገበያዎች እና ስታትስ', '135+ Markets & Stats')}
+              aria-label={bi('135+ ገበያዎች እና ስታትስ', '135+ Markets & Stats')}
+              className="w-[32px] min-h-[42px] rounded-md bg-slate-100 hover:bg-[#9AD84B]/40 border border-slate-200 text-[10px] font-mono-num font-black text-[#0E8A38] flex items-center justify-center cursor-pointer disabled:opacity-45"
+            >
+              +135
+            </button>
           </div>
         </div>
 
@@ -2019,7 +1976,7 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
               onClick={() => {
                 setMobileSlipOpen(false);
                 setSubTab('live');
-                onChangeSportsSection?.('cashout');
+                onChangeSportsSection?.('live');
               }}
               className="w-full py-2 px-3 rounded-lg bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 font-bold text-xs flex items-center justify-center gap-2 transition cursor-pointer"
             >
@@ -2051,118 +2008,161 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
     );
   }, [tickets, checkBetCode]);
 
-  const visibleLeagueRows = topLeagueSectionMatches.slice(0, leagueLimit);
   const visibleLiveRows = liveMatchesList.slice(0, liveLimit);
   const visiblePopularRows = filteredMatches.slice(0, popularLimit);
 
   return (
-    <div className="space-y-4 pb-14 lg:pb-0">
-      {/* DARK CHARCOAL SPORTSBOOK UTILITY BAR (Matching Screenshot #1) */}
+    <div className="space-y-3 pb-16 lg:pb-0">
+      {/* UNIFIED FOOTBALL HUB HEADER: 3 SEPARATE WORKSPACES (BETTING / LIVE & TV / PROMOS) */}
       <div className="-mx-3 sm:-mx-4 bg-[#26292B] text-white border-b border-black/30">
-        <div className="max-w-7xl mx-auto px-2 sm:px-4 grid grid-cols-5 items-stretch text-center">
-          <button
-            type="button"
-            onClick={() => {
-              playGameSound('click', soundEnabled);
-              setCheckBetOpen(true);
-            }}
-            className="py-2.5 px-1 flex flex-col items-center justify-center gap-1 hover:bg-white/5 transition cursor-pointer text-[11px] font-semibold text-slate-200"
-          >
-            <Receipt className="w-4 h-4 text-slate-300" />
-            <span className="truncate max-w-full">{bi('ትኬት አረጋግጥ', 'Check Bet')}</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              playGameSound('click', soundEnabled);
-              setSearchOpen((prev) => !prev);
-            }}
-            className={`py-2.5 px-1 flex flex-col items-center justify-center gap-1 transition cursor-pointer text-[11px] font-semibold ${
-              searchOpen || searchQuery ? 'bg-white/10 text-[#9AD84B]' : 'hover:bg-white/5 text-slate-200'
-            }`}
-          >
-            <Search className="w-4 h-4" />
-            <span className="truncate max-w-full">{bi('ጨዋታ ፈልግ', 'Search Event')}</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              playGameSound('click', soundEnabled);
-              setSubTab('fixtures');
-              setTimeframeFilter('live');
-              setDayFilter('all');
-              setOnlyMyBets(false);
-              onChangeSportsSection?.('live');
-              window.setTimeout(() => {
-                liveEventsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-              }, 80);
-            }}
-            className={`py-2.5 px-1 flex flex-col items-center justify-center gap-1 transition cursor-pointer text-[11px] font-semibold relative ${
-              timeframeFilter === 'live' && subTab === 'fixtures'
-                ? 'bg-white/10 text-[#9AD84B]'
-                : 'hover:bg-white/5 text-slate-200'
-            }`}
-          >
-            <Timer className="w-4 h-4" />
-            <span className="truncate max-w-full">{bi('ቀጥታ', 'IN-PLAY')}</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              playGameSound('click', soundEnabled);
-              setSubTab('fixtures');
-              setTimeframeFilter('all');
-              setDayFilter('all');
-              setLeagueFilter('all');
-              setOnlyMyBets(false);
-              onChangeSportsSection?.('sport');
-            }}
-            className={`py-2.5 px-1 flex flex-col items-center justify-center gap-1 transition cursor-pointer text-[11px] font-semibold relative ${
-              subTab === 'fixtures' && timeframeFilter === 'all' && !onlyMyBets
-                ? 'bg-white/10 text-[#9AD84B]'
-                : 'hover:bg-white/5 text-slate-200'
-            }`}
-          >
-            <span className="relative inline-flex">
-              <Trophy className="w-4 h-4" />
-              <span className="ml-1 font-mono-num text-[10px] font-black text-[#9AD84B]">
-                {scheduleMatches.length}
+        <div className="max-w-7xl mx-auto px-2 sm:px-4 pt-2 pb-1.5 space-y-1.5">
+          {/* Primary 3-Tab Switcher */}
+          <div className="grid grid-cols-3 gap-1.5 bg-black/30 p-1 rounded-xl">
+            <button
+              type="button"
+              onClick={() => {
+                playGameSound('click', soundEnabled);
+                setSubTab('betting');
+                onChangeSportsSection?.('sport');
+              }}
+              className={`min-h-[40px] px-2 py-1.5 rounded-lg text-xs font-black flex items-center justify-center gap-1.5 transition cursor-pointer whitespace-nowrap ${
+                subTab === 'betting'
+                  ? 'bg-[#9AD84B] text-slate-950 shadow-xs'
+                  : 'text-slate-200 hover:bg-white/10'
+              }`}
+            >
+              <Trophy className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">
+                {bi('ውርርድ', 'Betting')} ({filteredMatches.length})
               </span>
-            </span>
-            <span className="truncate max-w-full">{bi('እግር ኳስ', 'Football')}</span>
-          </button>
+            </button>
 
-          <button
-            type="button"
-            onClick={() => {
-              playGameSound('click', soundEnabled);
-              setSubTab('fixtures');
-              const next = !onlyMyBets;
-              setOnlyMyBets(next);
-              if (next && timeframeFilter === 'live') {
-                setTimeframeFilter('all');
-              }
-            }}
-            className={`py-2.5 px-1 flex flex-col items-center justify-center gap-1 transition cursor-pointer text-[11px] font-semibold ${
-              onlyMyBets ? 'bg-[#0E8A38] text-white' : 'hover:bg-white/5 text-slate-200'
-            }`}
-          >
-            <span className="inline-flex items-center">
-              <CheckCircle2 className="w-4 h-4" />
-              <span className="ml-1 font-mono-num text-[10px] font-black text-[#9AD84B]">
-                {upcomingBettedCount}
+            <button
+              type="button"
+              onClick={() => {
+                playGameSound('click', soundEnabled);
+                setSubTab('live');
+                onChangeSportsSection?.('live');
+              }}
+              className={`min-h-[40px] px-2 py-1.5 rounded-lg text-xs font-black flex items-center justify-center gap-1.5 transition cursor-pointer whitespace-nowrap ${
+                subTab === 'live'
+                  ? 'bg-rose-600 text-white shadow-xs'
+                  : 'text-slate-200 hover:bg-white/10'
+              }`}
+            >
+              <Tv className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">
+                {bi('ላይቭ', 'Live')} ({liveMatchesList.length}
+                {liveTickets.length > 0 ? ` · ${liveTickets.length}` : ''})
               </span>
-            </span>
-            <span className="truncate max-w-full">{bi('ውርርዶቼ', 'My Bets')}</span>
-          </button>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                playGameSound('click', soundEnabled);
+                setSubTab('promos');
+                onChangeSportsSection?.('promos');
+              }}
+              className={`min-h-[40px] px-2 py-1.5 rounded-lg text-xs font-black flex items-center justify-center gap-1.5 transition cursor-pointer whitespace-nowrap ${
+                subTab === 'promos'
+                  ? 'bg-white text-[#0E8A38] shadow-xs'
+                  : 'text-slate-200 hover:bg-white/10'
+              }`}
+            >
+              <Zap className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">{bi('ማስታወቂያ', 'Promos')}</span>
+            </button>
+          </div>
+
+          {/* Slim Compact Utility Row */}
+          <div className="flex items-center justify-between gap-1 text-[11px] font-bold">
+            <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
+              <button
+                type="button"
+                onClick={() => {
+                  playGameSound('click', soundEnabled);
+                  setCheckBetOpen(true);
+                }}
+                className="px-2.5 py-1 rounded-md bg-white/10 hover:bg-white/15 text-slate-100 flex items-center gap-1 cursor-pointer whitespace-nowrap shrink-0"
+              >
+                <Receipt className="w-3.5 h-3.5 text-[#9AD84B]" />
+                <span>{bi('ትኬት', 'Check Bet')}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  playGameSound('click', soundEnabled);
+                  setSearchOpen((prev) => !prev);
+                }}
+                className={`px-2.5 py-1 rounded-md flex items-center gap-1 cursor-pointer whitespace-nowrap shrink-0 ${
+                  searchOpen || searchQuery
+                    ? 'bg-[#0E8A38] text-white'
+                    : 'bg-white/10 hover:bg-white/15 text-slate-100'
+                }`}
+              >
+                <Search className="w-3.5 h-3.5" />
+                <span>{bi('ፈልግ', 'Search')}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  playGameSound('click', soundEnabled);
+                  setSubTab('betting');
+                  const next = !onlyMyBets;
+                  setOnlyMyBets(next);
+                  if (next && timeframeFilter === 'live') setTimeframeFilter('all');
+                }}
+                className={`px-2.5 py-1 rounded-md flex items-center gap-1 cursor-pointer whitespace-nowrap shrink-0 ${
+                  onlyMyBets
+                    ? 'bg-[#0E8A38] text-white'
+                    : 'bg-white/10 hover:bg-white/15 text-slate-100'
+                }`}
+              >
+                <CheckCircle2 className="w-3.5 h-3.5 text-[#9AD84B]" />
+                <span>
+                  {bi('ውርርዶቼ', 'My Bets')} ({upcomingBettedCount})
+                </span>
+              </button>
+            </div>
+
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                type="button"
+                disabled={syncingSchedule}
+                onClick={() => {
+                  playGameSound('click', soundEnabled);
+                  void loadLiveSchedule(true, true);
+                  void syncLiveResultsFromProvider(false);
+                }}
+                className="px-2 py-1 rounded-md bg-white/10 hover:bg-white/15 text-[#9AD84B] flex items-center gap-1 cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                title={providerLabel}
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${syncingSchedule ? 'animate-spin' : ''}`} />
+                <span className="hidden sm:inline">{syncingSchedule ? bi('በማደስ...', 'Syncing') : bi('አድስ', 'Sync')}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={onToggleSound}
+                title={soundEnabled ? bi('ድምጽ አጥፋ', 'Mute') : bi('ድምጽ አብራ', 'Unmute')}
+                className="w-7 h-7 rounded-md bg-white/10 hover:bg-white/15 flex items-center justify-center text-slate-200 cursor-pointer"
+              >
+                {soundEnabled ? (
+                  <Volume2 className="w-3.5 h-3.5 text-[#9AD84B]" />
+                ) : (
+                  <VolumeX className="w-3.5 h-3.5 text-slate-400" />
+                )}
+              </button>
+            </div>
+          </div>
         </div>
 
         {/* Inline Event Search Input */}
         {searchOpen && (
-          <div className="max-w-7xl mx-auto px-3 pb-3">
+          <div className="max-w-7xl mx-auto px-3 pb-2.5">
             <div className="relative flex items-center gap-2">
               <Search className="w-4 h-4 text-slate-400 absolute left-3" />
               <input
@@ -2193,199 +2193,29 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
 
       {/* Zero-Balance Telebirr Notice */}
       {wallet.balance < 1 && (
-        <div className="bg-white border border-amber-400 rounded-xl p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
-          <div className="space-y-0.5">
-            <h3 className="text-sm font-black text-slate-900">
-              {bi(
-                'ለእግር ኳስ ቤቲንግ መጀመሪያ በቴሌብር ዲፖሲት ያድርጉ',
-                'Deposit via Telebirr to start betting',
-              )}
-            </h3>
-            <p className="text-xs text-slate-600">
-              {bi(
-                'ቀሪ ሂሳብዎ 0.00 ብር ነው። ዝቅተኛው 100 ብር በቴሌብር ዲፖሲት አድርገው መወራረድ ይችላሉ።',
-                'Your balance is 0.00 ETB. Deposit minimum 100 ETB with Telebirr.',
-              )}
-            </p>
-          </div>
+        <div className="bg-white border border-amber-400 rounded-xl p-3 sm:p-3.5 flex items-center justify-between gap-3 shadow-xs">
+          <p className="text-xs text-slate-700 font-semibold">
+            {bi(
+              'ቀሪ ሂሳብዎ 0.00 ብር ነው — ዝቅተኛው 50 ብር በቴሌብር ዲፖሲት አድርገው ይወራረዱ።',
+              'Balance is 0.00 ETB — Deposit min 50 ETB via Telebirr to bet.',
+            )}
+          </p>
           <button
             type="button"
             onClick={onGoToDeposit}
-            className="shrink-0 px-4 py-2 rounded-lg bg-[#0E8A38] hover:bg-[#0B732E] text-white font-extrabold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer whitespace-nowrap"
+            className="shrink-0 px-3 py-1.5 rounded-lg bg-[#0E8A38] hover:bg-[#0B732E] text-white font-extrabold text-xs flex items-center gap-1 transition cursor-pointer whitespace-nowrap"
           >
-            <Wallet className="w-4 h-4" />
-            <span>{bi('አሁን ዲፖሲት አድርግ', 'Deposit Now')}</span>
+            <Wallet className="w-3.5 h-3.5" />
+            <span>{bi('ዲፖሲት', 'Deposit')}</span>
           </button>
         </div>
       )}
 
-      {/* Compact Sub-View Toolbar (Fixtures / Live Cashout / Rules / BeSoccer Sync) */}
-      <div className="bg-white border border-slate-200 rounded-xl p-2.5 sm:px-4 flex flex-wrap items-center justify-between gap-2 shadow-2xs">
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <button
-            type="button"
-            onClick={() => {
-              playGameSound('click', soundEnabled);
-              setSubTab('fixtures');
-              onChangeSportsSection?.('sport');
-            }}
-            className={`px-3 py-2 rounded-lg text-xs font-extrabold flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap ${
-              subTab === 'fixtures'
-                ? 'bg-[#0E8A38] text-white'
-                : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
-            }`}
-          >
-            <CalendarClock className="w-3.5 h-3.5" />
-            <span>
-              {bi('ፕሮግራም', 'Fixtures')} ({scheduleMatches.length})
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              playGameSound('click', soundEnabled);
-              setSubTab('live');
-              onChangeSportsSection?.('cashout');
-            }}
-            className={`px-3 py-2 rounded-lg text-xs font-extrabold flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap ${
-              subTab === 'live'
-                ? 'bg-[#0E8A38] text-white'
-                : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
-            }`}
-          >
-            <Radio className="w-3.5 h-3.5" />
-            <span>
-              {bi('ላይቭ & ካሽአውት', 'Live & Cashout')} ({liveTickets.length})
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              playGameSound('click', soundEnabled);
-              setSubTab('rules');
-            }}
-            className={`px-3 py-2 rounded-lg text-xs font-extrabold flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap ${
-              subTab === 'rules'
-                ? 'bg-[#0E8A38] text-white'
-                : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
-            }`}
-          >
-            <ShieldCheck className="w-3.5 h-3.5" />
-            <span>{bi('የጨዋታ እና አቆማመር ህግ', 'Rules & How To Bet')}</span>
-          </button>
-        </div>
-
-        <div className="flex items-center gap-2 shrink-0">
-          {syncedMatchesCount > 0 && (
-            <span
-              title={providerLabel}
-              className="hidden md:inline font-mono-num text-[11px] font-bold text-[#0E8A38] max-w-[240px] truncate"
-            >
-              {syncedMatchesCount} {bi('አሁናዊ', 'Synced')} · {providerLabel}
-            </span>
-          )}
-          <button
-            type="button"
-            disabled={syncingSchedule}
-            onClick={() => {
-              playGameSound('click', soundEnabled);
-              void loadLiveSchedule(true, true);
-              void syncLiveResultsFromProvider(false);
-            }}
-            className="px-2.5 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 border border-slate-200 text-[11px] font-extrabold text-[#0E8A38] flex items-center gap-1 transition cursor-pointer disabled:opacity-50 whitespace-nowrap"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${syncingSchedule ? 'animate-spin' : ''}`} />
-            <span>{syncingSchedule ? bi('በማደስ ላይ...', 'Syncing...') : bi('ፕሮግራም አድስ', 'Sync')}</span>
-          </button>
-
-          <a
-            href="https://www.besoccer.com/"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="px-2.5 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 border border-slate-200 text-[11px] font-bold text-slate-700 flex items-center gap-1 transition whitespace-nowrap"
-          >
-            <span>BeSoccer</span>
-            <ExternalLink className="w-3 h-3 text-[#0E8A38]" />
-          </a>
-
-          <button
-            type="button"
-            onClick={onToggleSound}
-            title={soundEnabled ? bi('ድምጽ አጥፋ', 'Mute') : bi('ድምጽ አብራ', 'Unmute')}
-            className="w-9 h-9 rounded-lg bg-slate-100 hover:bg-slate-200 border border-slate-200 flex items-center justify-center text-slate-700 cursor-pointer"
-          >
-            {soundEnabled ? (
-              <Volume2 className="w-4 h-4 text-[#0E8A38]" />
-            ) : (
-              <VolumeX className="w-4 h-4 text-slate-400" />
-            )}
-          </button>
-        </div>
-      </div>
-
-      {/* 15-Minute Pre-Match Push Notifications & Remind Me Controls Bar */}
-      <div className="bg-white border border-slate-200 rounded-xl px-3 py-2.5 sm:px-4 flex flex-wrap items-center justify-between gap-2 shadow-2xs text-xs">
-        <div className="flex items-center gap-2 min-w-0">
-          {pushEnabled ? (
-            <BellRing className="w-4 h-4 text-[#0E8A38] shrink-0" />
-          ) : (
-            <BellOff className="w-4 h-4 text-slate-400 shrink-0" />
-          )}
-          <span className="font-bold text-slate-800 truncate">
-            {bi(
-              `ከጨዋታ መጀመር 15 ደቂቃ በፊት ማንቂያ (${remindMatchIds.length} Remind Me · ${upcomingBettedCount} ውርርድ)`,
-              `15m Pre-Match Alerts (${remindMatchIds.length} Remind Me · ${upcomingBettedCount} Betted)`,
-            )}
-          </span>
-        </div>
-
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <button
-            type="button"
-            onClick={() => void handleTogglePushEnabled()}
-            className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-extrabold cursor-pointer transition ${
-              pushEnabled
-                ? 'bg-[#EAF3ED] border-[#0E8A38]/40 text-[#0E8A38]'
-                : 'bg-slate-100 border-slate-200 text-slate-600'
-            }`}
-          >
-            {pushEnabled ? bi('ማንቂያ: በርቷል', 'Alerts: ON') : bi('ማንቂያ: ጠፍቷል', 'Alerts: OFF')}
-          </button>
-
-          {browserPerm !== 'granted' && browserPerm !== 'unsupported' && (
-            <button
-              type="button"
-              onClick={() => void handleEnableBrowserPush()}
-              className="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-[11px] font-bold cursor-pointer transition"
-            >
-              {bi('የስልክ Push ፍቀድ', 'Enable Browser Push')}
-            </button>
-          )}
-
-          <button
-            type="button"
-            onClick={() => {
-              const target =
-                scheduleMatches.find((m) => !m.isLive && (remindMatchSet.has(m.id) || getUserBetInfo(m))) ||
-                scheduleMatches.find((m) => !m.isLive);
-              if (target) {
-                firePreMatchAlert(target, 15, 'preview');
-              }
-            }}
-            className="px-2.5 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 text-[11px] font-bold cursor-pointer transition"
-          >
-            {bi('ማንቂያ ሞክር', 'Test 15m Alert')}
-          </button>
-        </div>
-      </div>
-
-      {/* Dismissible Live Pre-Match 15-Min Alert Banner */}
+      {/* Dismissible Live Pre-Match 15-Min Alert Banner (Appears only when triggered) */}
       {activePreMatchAlerts.length > 0 && (
         <div
           role="alert"
-          className="bg-amber-50 border-2 border-amber-400 rounded-xl p-3 sm:p-3.5 space-y-2 shadow-sm"
+          className="bg-amber-50 border-2 border-amber-400 rounded-xl p-3 space-y-2 shadow-sm"
         >
           {activePreMatchAlerts.map((al) => (
             <div key={al.id} className="flex items-center justify-between gap-3">
@@ -2421,93 +2251,678 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
         </div>
       )}
 
-      {/* TAB 1: SPORTSBOOK FIXTURES BOARD */}
-      {subTab === 'fixtures' && (
-        <div className="space-y-4">
-          {/* DEDICATED SEARCH BAR FOR UPCOMING SECTION (Team or League Filter) */}
-          {sportsSection === 'upcoming' && (
-            <section
-              aria-label={bi('ቀጣይ ጨዋታዎች መፈለጊያ', 'Upcoming Matches Search')}
-              className="bg-white border-2 border-[#0E8A38]/30 rounded-xl p-3.5 sm:p-4 shadow-xs space-y-2.5"
-            >
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <CalendarClock className="w-4 h-4 text-[#0E8A38] shrink-0" />
-                  <h2 className="text-sm sm:text-base font-black text-slate-900">
-                    {bi(
-                      'ቀጣይ 7 ቀን ጨዋታዎች · በቡድን ወይም በሊግ ይፈልጉ',
-                      'Upcoming Matches · Search by Team or League',
-                    )}
-                  </h2>
-                </div>
-                <span className="font-mono-num text-xs font-extrabold text-[#0E8A38]">
-                  {filteredMatches.length} {bi('ጨዋታ ተገኝቷል', 'upcoming matches')}
-                </span>
-              </div>
-
-              <div className="relative flex items-center">
-                <Search className="w-4 h-4 text-slate-400 absolute left-3 pointer-events-none" />
-                <input
-                  id="upcomingMatchSearchInput"
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder={bi(
-                    'የቡድን ስም ወይም ሊግ ይጻፉ (ለምሳሌ Arsenal, Premier League, Ethiopia, Real Madrid)...',
-                    'Search upcoming football matches by team name or league (e.g. Arsenal, Premier League, Ethiopia)...',
-                  )}
-                  className="w-full bg-[#F8FAFC] border border-slate-300 focus:border-[#0E8A38] focus:bg-white rounded-lg pl-9 pr-16 py-2.5 text-xs sm:text-sm font-medium text-slate-900 outline-none transition"
-                />
-                {searchQuery && (
-                  <button
-                    type="button"
-                    onClick={() => setSearchQuery('')}
-                    className="absolute right-2 px-2 py-1 rounded bg-slate-200 hover:bg-slate-300 text-slate-700 text-[11px] font-bold flex items-center gap-1 cursor-pointer"
-                    aria-label={bi('ፍለጋ አጽዳ', 'Clear search')}
-                  >
-                    <X className="w-3.5 h-3.5" />
-                    <span>{bi('አጽዳ', 'Clear')}</span>
-                  </button>
-                )}
-              </div>
-
-              <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 text-[11px]">
-                <span className="text-slate-500 font-bold shrink-0">
-                  {bi('ፈጣን ፍለጋ:', 'Quick:')}{' '}
-                </span>
-                {[
-                  'Premier League',
-                  'Champions League',
-                  'La Liga',
-                  'Ethiopia',
-                  'Arsenal',
-                  'Barcelona',
-                ].map((term) => {
-                  const active = searchQuery.trim().toLowerCase() === term.toLowerCase();
-                  return (
+      {/* WORKSPACE 1: DISTRACTION-FREE BETTING BOARD (ውርርድ) */}
+      {subTab === 'betting' && (
+        <div className="grid lg:grid-cols-12 gap-4 items-start">
+          {/* LEFT 8 COLS: HIGH-DENSITY UNIFIED MATCH TABLE */}
+          <div className="lg:col-span-8">
+            <section className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
+              {/* Compact Filters: Leagues + 7-Day + Timeframe */}
+              <div className="p-2 bg-[#F8FAFC] border-b border-slate-200 space-y-1.5">
+                {/* League Filter Chips */}
+                <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
+                  {TIER_OPTIONS.map((tier) => (
                     <button
-                      key={term}
+                      key={`t_${String(tier.id)}`}
                       type="button"
                       onClick={() => {
                         playGameSound('click', soundEnabled);
-                        setSearchQuery(active ? '' : term);
+                        setTierFilter(tier.id);
+                        if (
+                          tier.id !== 'all' &&
+                          leagueFilter !== 'all' &&
+                          LEAGUE_OPTIONS.find((l) => l.id === leagueFilter)?.tier !== tier.id
+                        ) {
+                          setLeagueFilter('all');
+                        }
                       }}
-                      className={`px-2.5 py-1 rounded font-bold whitespace-nowrap shrink-0 cursor-pointer transition ${
-                        active
-                          ? 'bg-[#0E8A38] text-white'
-                          : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                      className={`px-2 py-1 rounded text-[11px] font-extrabold transition cursor-pointer whitespace-nowrap shrink-0 ${
+                        tierFilter === tier.id
+                          ? 'bg-slate-900 text-white'
+                          : 'bg-slate-200/70 text-slate-700 hover:bg-slate-300'
                       }`}
                     >
-                      {term}
+                      {tier.id === 'all' ? bi('ሁሉም', 'All') : `T${tier.id}`}
                     </button>
+                  ))}
+                  {LEAGUE_OPTIONS.filter(
+                    (l) => l.id === 'all' || tierFilter === 'all' || l.tier === tierFilter,
+                  ).map((league) => {
+                    const active = leagueFilter === league.id;
+                    return (
+                      <button
+                        key={league.id}
+                        type="button"
+                        onClick={() => {
+                          playGameSound('click', soundEnabled);
+                          setLeagueFilter(league.id);
+                        }}
+                        className={`px-2.5 py-1 rounded text-[11px] font-extrabold whitespace-nowrap shrink-0 transition cursor-pointer border ${
+                          active
+                            ? 'bg-[#9AD84B] border-[#7EC135] text-slate-950'
+                            : 'bg-white border-slate-200 text-slate-800 hover:border-[#0E8A38]/50'
+                        }`}
+                      >
+                        {league.id === 'all' ? bi('ሁሉም ሊጎች', 'All Leagues') : league.label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* 7-Day & Timeframe Chips */}
+                <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      playGameSound('click', soundEnabled);
+                      setDayFilter('all');
+                      setTimeframeFilter('all');
+                    }}
+                    className={`px-2.5 py-1 rounded text-[11px] font-extrabold whitespace-nowrap shrink-0 cursor-pointer ${
+                      dayFilter === 'all' && timeframeFilter === 'all'
+                        ? 'bg-[#0E8A38] text-white'
+                        : 'bg-white border border-slate-200 text-slate-700 hover:border-[#0E8A38]'
+                    }`}
+                  >
+                    {bi('7 ቀናት', '7 Days')}
+                  </button>
+                  {next7Days.map((day) => (
+                    <button
+                      key={day.dateKey}
+                      type="button"
+                      onClick={() => {
+                        playGameSound('click', soundEnabled);
+                        setDayFilter(day.dateKey);
+                        setTimeframeFilter('all');
+                      }}
+                      className={`px-2 py-1 rounded text-[11px] font-bold whitespace-nowrap shrink-0 flex items-center gap-1 cursor-pointer ${
+                        dayFilter === day.dateKey
+                          ? 'bg-[#9AD84B] text-slate-950 font-black'
+                          : 'bg-white border border-slate-200 text-slate-700 hover:border-[#0E8A38]'
+                      }`}
+                    >
+                      <span>{day.shortLabel}</span>
+                      <span className="font-mono-num opacity-70">({dayCounts[day.dateKey] || 0})</span>
+                    </button>
+                  ))}
+                  {TIMEFRAME_OPTIONS.filter((tf) => tf.id !== 'all').map((tf) => (
+                    <button
+                      key={tf.id}
+                      type="button"
+                      onClick={() => {
+                        playGameSound('click', soundEnabled);
+                        setTimeframeFilter(tf.id);
+                        setDayFilter('all');
+                      }}
+                      className={`px-2 py-1 rounded text-[11px] font-bold whitespace-nowrap shrink-0 cursor-pointer ${
+                        timeframeFilter === tf.id
+                          ? 'bg-slate-900 text-white'
+                          : 'bg-slate-200/70 text-slate-700 hover:bg-slate-300'
+                      }`}
+                    >
+                      {tf.label} ({timeframeCounts[tf.id]})
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Compact Column Header */}
+              <div className="sm:hidden px-2 py-1.5 bg-slate-100 border-b border-slate-200 flex items-center justify-between text-[10px] font-extrabold text-slate-600">
+                <span>
+                  {bi('ጨዋታ (ይንኩ +135/Stats)', 'Match (Tap +135/Stats)')} · {filteredMatches.length}
+                </span>
+                <div className="flex items-center gap-1 pr-0.5 font-mono-num">
+                  <span className="w-[43px] text-center">1</span>
+                  <span className="w-[43px] text-center">X</span>
+                  <span className="w-[43px] text-center">2</span>
+                  <span className="w-[32px] text-center">+</span>
+                </div>
+              </div>
+              <div className="hidden sm:grid sm:grid-cols-[64px_1fr_repeat(3,64px)_118px] items-center gap-1 px-3 py-2 bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-600">
+                <span>{bi('ሰዓት', 'Time')}</span>
+                <span>{bi('ጨዋታ', 'Event')}</span>
+                <span className="text-center">{bi('1', 'Home')}</span>
+                <span className="text-center">{bi('X', 'Draw')}</span>
+                <span className="text-center">{bi('2', 'Away')}</span>
+                <span className="text-center">{bi('አስታውስ/+', 'Alert/+')}</span>
+              </div>
+
+              {!scheduleLoaded && scheduleMatches.length === 0 ? (
+                <div className="p-6 text-center text-xs font-bold text-slate-600">
+                  {bi(
+                    'ትክክለኛ የኦንላይን የእግር ኳስ ፕሮግራም በመጫን ላይ...',
+                    'Loading online football fixtures & odds...',
+                  )}
+                </div>
+              ) : visiblePopularRows.length === 0 ? (
+                <div className="p-8 text-center space-y-2 text-xs text-slate-700">
+                  <p className="font-bold">
+                    {onlyMyBets
+                      ? bi(
+                          'ውርርድ የቆረጡበት ቀጣይ ጨዋታ አልተገኘም',
+                          'No upcoming betted matches match these filters',
+                        )
+                      : bi('በዚህ ማጣሪያ ውስጥ ጨዋታ አልተገኘም', 'No matches found')}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOnlyMyBets(false);
+                      setTimeframeFilter('all');
+                      setDayFilter('all');
+                      setTierFilter('all');
+                      setLeagueFilter('all');
+                      setSearchQuery('');
+                    }}
+                    className="px-4 py-2 rounded bg-[#0E8A38] text-white font-bold cursor-pointer"
+                  >
+                    {bi('ሁሉንም ጨዋታዎች አሳይ', 'Show All Matches')}
+                  </button>
+                </div>
+              ) : (
+                <div>
+                  {groupMatchesByDate(visiblePopularRows).map((dateGroup) => (
+                    <div key={`pop_${dateGroup.dateKey}`}>
+                      <div className="px-2.5 sm:px-3 py-1 bg-[#EAF3ED] border-b border-slate-200 text-[11px] font-extrabold text-[#0E8A38] font-mono-num">
+                        {dateGroup.label} ({dateGroup.matches.length})
+                      </div>
+                      {dateGroup.matches.map((m) => renderSportsbookTableRow(m, m.isLive))}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {filteredMatches.length > 25 && (
+                <div className="flex border-t border-slate-200 bg-slate-50">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setPopularLimit((prev) =>
+                        prev >= filteredMatches.length ? 25 : prev + 25,
+                      )
+                    }
+                    className="flex-1 py-2.5 hover:bg-slate-100 text-xs font-extrabold text-slate-700 flex items-center justify-center gap-1 cursor-pointer transition"
+                  >
+                    <span>
+                      {popularLimit >= filteredMatches.length
+                        ? bi('አሳንስ', 'Show less')
+                        : `${bi('ተጨማሪ አሳይ', 'Show more')} (${filteredMatches.length - visiblePopularRows.length})`}
+                    </span>
+                    {popularLimit >= filteredMatches.length ? (
+                      <ChevronUp className="w-4 h-4" />
+                    ) : (
+                      <ChevronDown className="w-4 h-4" />
+                    )}
+                  </button>
+                  {popularLimit < filteredMatches.length && (
+                    <button
+                      type="button"
+                      onClick={() => setPopularLimit(filteredMatches.length)}
+                      className="px-4 py-2.5 border-l border-slate-200 hover:bg-slate-100 text-xs font-black text-[#0E8A38] cursor-pointer transition whitespace-nowrap"
+                    >
+                      {bi(`ሁሉንም (${filteredMatches.length})`, `All (${filteredMatches.length})`)}
+                    </button>
+                  )}
+                </div>
+              )}
+            </section>
+          </div>
+
+          {/* RIGHT 4 COLS: STICKY DESKTOP BETSLIP */}
+          <aside className="hidden lg:block lg:col-span-4 lg:sticky lg:top-28">
+            {renderBetslipBody()}
+          </aside>
+        </div>
+      )}
+
+      {/* WORKSPACE 2: LIVE MATCHES, VIDEO BROADCAST & CASHOUT CENTER (ላይቭ) */}
+      {subTab === 'live' && (
+        <div className="grid lg:grid-cols-12 gap-4 items-start">
+          <div className="lg:col-span-8 space-y-4">
+            {/* Live Video Broadcast + Live Matches Table */}
+            <section className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
+              <div className="bg-[#0E8A38] text-white px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-sm font-extrabold flex items-center gap-2">
+                  <Radio className="w-4 h-4 text-[#9AD84B]" />
+                  <span>{bi('ቀጥታ ጨዋታዎች እና ቪድዮ (Live TV)', 'Live Matches & Video Broadcast')}</span>
+                </h3>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      playGameSound('click', soundEnabled);
+                      setInlineVideoOpen((prev) => !prev);
+                    }}
+                    className={`px-2.5 py-1 rounded text-[11px] font-black flex items-center gap-1 cursor-pointer transition ${
+                      inlineVideoOpen
+                        ? 'bg-rose-600 text-white'
+                        : 'bg-black/25 hover:bg-black/40 text-white'
+                    }`}
+                  >
+                    <Tv className="w-3.5 h-3.5" />
+                    <span>
+                      {inlineVideoOpen
+                        ? bi('ቪድዮ ደብቅ', 'Hide TV')
+                        : bi('በቪድዮ ይመልከቱ', 'Watch Live TV')}
+                    </span>
+                  </button>
+                  <span className="px-2 py-0.5 rounded bg-[#9AD84B] text-slate-950 font-mono-num text-[11px] font-black">
+                    {liveMatchesList.length} LIVE
+                  </span>
+                </div>
+              </div>
+
+              {inlineVideoOpen && liveMatchesList.length > 0 && (
+                <div className="p-3 bg-[#081018] border-b border-slate-200">
+                  <LiveMatchVideoPlayer
+                    feeds={liveMatchesList.map(matchToBroadcastFeed)}
+                    activeFeedId={
+                      activeVideoMatchId &&
+                      liveMatchesList.some((m) => m.id === activeVideoMatchId)
+                        ? activeVideoMatchId
+                        : liveMatchesList[0].id
+                    }
+                    onSelectFeed={(id) => setActiveVideoMatchId(id)}
+                    soundEnabled={soundEnabled}
+                    onToggleSound={onToggleSound}
+                    mode="inline"
+                    onExpandTheater={() => {
+                      const targetId =
+                        activeVideoMatchId &&
+                        liveMatchesList.some((m) => m.id === activeVideoMatchId)
+                          ? activeVideoMatchId
+                          : liveMatchesList[0].id;
+                      setModalVideoState({
+                        source: 'live_matches',
+                        activeId: targetId,
+                      });
+                    }}
+                    selectedMarket={
+                      selectedPicksByMatch[
+                        activeVideoMatchId &&
+                        liveMatchesList.some((m) => m.id === activeVideoMatchId)
+                          ? activeVideoMatchId
+                          : liveMatchesList[0].id
+                      ]
+                    }
+                    getScaledOdd={getScaledOdd}
+                    onQuickPick={togglePick}
+                    onOpenMarkets={(m) => {
+                      playGameSound('click', soundEnabled);
+                      setMarketsMatchId(m.id);
+                    }}
+                  />
+                </div>
+              )}
+
+              <div className="sm:hidden px-2 py-1.5 bg-slate-100 border-b border-slate-200 flex items-center justify-between text-[10px] font-extrabold text-slate-600">
+                <span>{bi('ቀጥታ ውጤት', 'Live Score')} ({liveMatchesList.length})</span>
+                <div className="flex items-center gap-1 pr-0.5 font-mono-num">
+                  <span className="w-[43px] text-center">1</span>
+                  <span className="w-[43px] text-center">X</span>
+                  <span className="w-[43px] text-center">2</span>
+                  <span className="w-[30px] text-center">TV</span>
+                  <span className="w-[32px] text-center">+</span>
+                </div>
+              </div>
+              <div className="hidden sm:grid sm:grid-cols-[64px_1fr_repeat(3,64px)_118px] items-center gap-1 px-3 py-2 bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-600">
+                <span>{bi('ውጤት', 'Score')}</span>
+                <span>{bi('ጨዋታ', 'Event')}</span>
+                <span className="text-center">{bi('1', 'Home')}</span>
+                <span className="text-center">{bi('X', 'Draw')}</span>
+                <span className="text-center">{bi('2', 'Away')}</span>
+                <span className="text-center">{bi('ቪድዮ/+', 'TV/+')}</span>
+              </div>
+
+              {visibleLiveRows.length === 0 ? (
+                <div className="p-6 text-center text-xs text-slate-600 space-y-2">
+                  <p className="font-semibold text-slate-700">
+                    {bi(
+                      'በዚህ ሰዓት በቀጥታ እየተካሄደ ያለ ጨዋታ የለም — ወደ ውርርድ ክፍል ሄደው መወራረድ ይችላሉ።',
+                      'No live matches in progress right now — switch to Betting to wager on upcoming fixtures.',
+                    )}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSubTab('betting');
+                      onChangeSportsSection?.('sport');
+                    }}
+                    className="px-4 py-2 rounded-lg bg-[#0E8A38] text-white font-bold cursor-pointer"
+                  >
+                    {bi('ወደ ውርርድ ሂድ', 'Go to Betting')}
+                  </button>
+                </div>
+              ) : (
+                <div>{visibleLiveRows.map((m) => renderSportsbookTableRow(m, true))}</div>
+              )}
+
+              {liveMatchesList.length > 15 && (
+                <div className="flex border-t border-slate-200 bg-slate-50">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setLiveLimit((prev) =>
+                        prev >= liveMatchesList.length ? 15 : prev + 15,
+                      )
+                    }
+                    className="flex-1 py-2.5 hover:bg-slate-100 text-xs font-extrabold text-slate-700 flex items-center justify-center gap-1 cursor-pointer transition"
+                  >
+                    <span>
+                      {liveLimit >= liveMatchesList.length
+                        ? bi('አሳንስ', 'Show less')
+                        : `${bi('ተጨማሪ አሳይ', 'Show more')} (${liveMatchesList.length - visibleLiveRows.length})`}
+                    </span>
+                  </button>
+                  {liveLimit < liveMatchesList.length && (
+                    <button
+                      type="button"
+                      onClick={() => setLiveLimit(liveMatchesList.length)}
+                      className="px-4 py-2.5 border-l border-slate-200 hover:bg-slate-100 text-xs font-black text-[#0E8A38] cursor-pointer transition whitespace-nowrap"
+                    >
+                      {bi(`ሁሉንም (${liveMatchesList.length})`, `All (${liveMatchesList.length})`)}
+                    </button>
+                  )}
+                </div>
+              )}
+            </section>
+
+            {/* Active Live Tickets & Cashout Header */}
+            <div className="bg-white border border-slate-200 rounded-xl p-3.5 sm:p-4 flex flex-wrap items-center justify-between gap-2 shadow-xs">
+              <div className="flex items-center gap-2 text-xs text-slate-700">
+                <ShieldCheck className="w-4 h-4 text-[#0E8A38] shrink-0" />
+                <span>
+                  {bi('የካሽአውት ህግ:', 'Cashout:')} <strong className="font-mono-num">{CASHOUT_MIN_MINUTE}&apos;–{CASHOUT_MAX_MINUTE}&apos;</strong> ·{' '}
+                  <strong className="font-mono-num text-[#0E8A38]">{Math.round(CASHOUT_FEE_RATE * 100)}%</strong>{' '}
+                  {bi('ክፍያ · ከፍተኛ', 'fee · Max')}{' '}
+                  <strong className="font-mono-num">{Math.round(CASHOUT_MAX_PAYOUT_RATIO * 100)}%</strong>
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {lastResultsSyncAt && (
+                  <span className="text-[11px] font-mono-num text-slate-500">
+                    {new Date(lastResultsSyncAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  disabled={resultsSyncing}
+                  onClick={() => {
+                    playGameSound('click', soundEnabled);
+                    void syncLiveResultsFromProvider(true);
+                  }}
+                  className="min-h-[38px] px-3 py-1.5 rounded-lg bg-[#EAF3ED] hover:bg-emerald-100 border border-[#0E8A38]/25 text-[#0E8A38] text-xs font-black flex items-center gap-1.5 cursor-pointer transition disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${resultsSyncing ? 'animate-spin' : ''}`} />
+                  <span>{resultsSyncing ? bi('በማምጣት ላይ...', 'Syncing...') : bi('ቀጥታ ውጤት አድስ', 'Sync Results')}</span>
+                </button>
+              </div>
+            </div>
+
+            {liveTickets.length === 0 ? (
+              <div className="bg-white border border-slate-200 rounded-xl p-6 text-center space-y-2 shadow-xs">
+                <p className="text-sm font-extrabold text-slate-900">
+                  {bi('አሁን ላይቭ እየተጫወተ ያለ ትኬት የለም', 'No active live tickets right now')}
+                </p>
+                <p className="text-xs text-slate-600">
+                  {bi(
+                    'ትኬት ሲቆርጡ ወዲያውኑ እዚህ ገብተው የቀጥታ ውጤትና ካሽአውት ማድረግ ይችላሉ።',
+                    'Place a ticket to track live scores and cash out early here.',
+                  )}
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {liveTickets.map((ticket) => {
+                  const snap = liveSimMap[ticket.id] || {
+                    minute: Math.max(1, ticket.currentMinute || 1),
+                    picks: ticket.picks,
+                  };
+                  const quote = computeFootballCashout(
+                    snap.picks,
+                    ticket.betAmount,
+                    ticket.potentialPayout,
+                    snap.minute,
+                  );
+                  const isBusy = busyTicketId === ticket.id;
+                  const hitsCount = snap.picks.filter((p) => p.hit).length;
+
+                  return (
+                    <article
+                      key={ticket.id}
+                      className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs"
+                    >
+                      <div className="bg-[#0E8A38] text-white px-4 py-3 flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <p className="text-[11px] font-bold text-[#9AD84B] font-mono-num">
+                            LIVE · {snap.minute}&apos; / 90&apos; · {hitsCount}/{snap.picks.length}{' '}
+                            {bi('በማሸነፍ ላይ', 'winning')}
+                          </p>
+                          <h3 className="text-sm sm:text-base font-black">
+                            {bi('ትኬት', 'Ticket')} #{ticket.id.slice(-6).toUpperCase()} · {ticket.picksCount}{' '}
+                            {bi('ጨዋታ', 'legs')}
+                          </h3>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-3 text-xs font-mono-num">
+                          <button
+                            type="button"
+                            onClick={() => openTicketLiveVideo(ticket.id)}
+                            className="px-2.5 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-sans font-black text-[11px] flex items-center gap-1 cursor-pointer transition"
+                          >
+                            <Tv className="w-3.5 h-3.5" />
+                            <span>{bi('በቪድዮ ተመልከት', 'Watch Live')}</span>
+                          </button>
+                          <div>
+                            <span className="text-emerald-100 block text-[10px]">{bi('መወራረጃ', 'Stake')}</span>
+                            <span className="font-black">{formatETB(ticket.betAmount)}</span>
+                          </div>
+                          <div>
+                            <span className="text-emerald-100 block text-[10px]">{bi('ኦድ', 'Odds')}</span>
+                            <span className="font-black text-[#9AD84B]">{ticket.totalOdds.toFixed(2)}x</span>
+                          </div>
+                          <div>
+                            <span className="text-emerald-100 block text-[10px]">{bi('90\' ሽልማት', '90\' Payout')}</span>
+                            <span className="font-black">{formatETB(ticket.potentialPayout)}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="p-4 space-y-4">
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between text-[11px] font-mono-num text-slate-500">
+                            <span>0&apos;</span>
+                            <span className="text-[#0E8A38] font-bold">
+                              {bi('ካሽአውት መስኮት', 'Cashout Window')} ({CASHOUT_MIN_MINUTE}&apos;–{CASHOUT_MAX_MINUTE}&apos;)
+                            </span>
+                            <span>90&apos; FT</span>
+                          </div>
+                          <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-[#0E8A38] transition-all duration-300"
+                              style={{ width: `${Math.min(100, Math.round((snap.minute / 90) * 100))}%` }}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                          {snap.picks.map((leg) => (
+                            <div
+                              key={leg.matchId}
+                              className={`border rounded-lg p-3 flex items-center justify-between gap-3 ${
+                                leg.hit ? 'bg-emerald-50/70 border-[#0E8A38]/40' : 'bg-slate-50 border-slate-200'
+                              }`}
+                            >
+                              <div className="min-w-0">
+                                <p className="text-xs sm:text-sm font-extrabold text-slate-900 truncate">
+                                  {leg.home} vs {leg.away}
+                                </p>
+                                <p className="text-[11px] text-slate-600 mt-0.5">
+                                  {leg.marketLabel || getMarketLabel(leg.market)}{' '}
+                                  <span className="font-mono-num font-bold text-slate-900">
+                                    ({leg.odd.toFixed(2)}x)
+                                  </span>
+                                </p>
+                                <p className="text-[11px] font-mono-num text-slate-500 mt-0.5">
+                                  HT {leg.htHomeGoals ?? 0}-{leg.htAwayGoals ?? 0} ·{' '}
+                                  {bi('ካርድ', 'Cards')} {(leg.homeCards ?? 0) + (leg.awayCards ?? 0)} ·{' '}
+                                  {bi('ኮርነር', 'Corners')} {(leg.homeCorners ?? 0) + (leg.awayCorners ?? 0)}
+                                </p>
+                              </div>
+
+                              <div className="flex items-center gap-2 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => openTicketLiveVideo(ticket.id, leg.matchId)}
+                                  title={bi('ይህን ጨዋታ በቪድዮ ይመልከቱ', 'Watch this leg live in video')}
+                                  className="px-2 py-1.5 rounded bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-black inline-flex items-center gap-1 cursor-pointer transition"
+                                >
+                                  <Tv className="w-3 h-3" />
+                                  <span>{bi('ቪድዮ', 'TV')}</span>
+                                </button>
+                                <span className="font-mono-num text-sm font-black text-slate-900 bg-white border border-slate-200 px-2.5 py-1 rounded">
+                                  {leg.homeGoals} - {leg.awayGoals}
+                                </span>
+                                {leg.hit ? (
+                                  <CheckCircle2 className="w-5 h-5 text-[#0E8A38] shrink-0" />
+                                ) : (
+                                  <Clock className="w-5 h-5 text-slate-400 shrink-0" />
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="pt-3 border-t border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                          <div className="space-y-0.5">
+                            <p className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                              {quote.eligible ? (
+                                <Banknote className="w-4 h-4 text-[#0E8A38] shrink-0" />
+                              ) : (
+                                <Lock className="w-4 h-4 text-rose-500 shrink-0" />
+                              )}
+                              <span>{quote.reason}</span>
+                            </p>
+                            {quote.eligible && (
+                              <p className="text-[11px] text-slate-500 font-mono-num">
+                                {bi(
+                                  `12% ክፍያ ተቀንሶ ወዲያውኑ ወደ ቦርሳዎ የሚገባ: ${formatETB(quote.offer)}`,
+                                  `Net instant payout after 12% fee: ${formatETB(quote.offer)}`,
+                                )}
+                              </p>
+                            )}
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-2 shrink-0">
+                            <button
+                              type="button"
+                              disabled={!quote.eligible || isBusy}
+                              onClick={() => handleCashout(ticket)}
+                              className={`px-4 py-2.5 min-h-[44px] rounded-lg font-extrabold text-xs sm:text-sm flex items-center gap-2 transition cursor-pointer whitespace-nowrap ${
+                                quote.eligible
+                                  ? 'bg-[#0E8A38] hover:bg-[#0B732E] text-white'
+                                  : 'bg-slate-200 text-slate-500 cursor-not-allowed'
+                              }`}
+                            >
+                              <Banknote className="w-4 h-4 shrink-0" />
+                              <span>
+                                {isBusy
+                                  ? bi('በመፈጸም ላይ...', 'Processing...')
+                                  : quote.eligible
+                                    ? `${bi('ካሽአውት ውሰድ', 'Cashout')} (${formatETB(quote.offer)})`
+                                    : bi('ካሽአውት ተዘግቷል', 'Cashout Locked')}
+                              </span>
+                            </button>
+
+                            <button
+                              type="button"
+                              disabled={isBusy}
+                              onClick={() => handleFastForwardToFullTime(ticket)}
+                              className="px-3.5 py-2.5 min-h-[44px] rounded-lg bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-800 font-bold text-xs flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap disabled:opacity-50"
+                            >
+                              <FastForward className="w-4 h-4 text-[#0E8A38] shrink-0" />
+                              <span>{bi("90' ጨርስ", "Finish 90'")}</span>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </article>
                   );
                 })}
               </div>
-            </section>
-          )}
+            )}
 
+            {settledTickets.length > 0 && (
+              <div className="bg-white border border-slate-200 rounded-xl p-4 sm:p-5 space-y-3 shadow-xs">
+                <h3 className="text-sm font-black text-slate-900">
+                  {bi(
+                    `የቅርብ ጊዜ የተዘጉ እና ካሽአውት የተደረጉ ትኬቶች (${settledTickets.length})`,
+                    `Recent Settled & Cashed-Out Tickets (${settledTickets.length})`,
+                  )}
+                </h3>
+                <div className="space-y-2">
+                  {settledTickets.slice(0, 8).map((t) => {
+                    const isCashedOut = t.status === 'cashed_out';
+                    const isWon = t.status === 'won';
+                    return (
+                      <div
+                        key={t.id}
+                        className="bg-slate-50 border border-slate-200 rounded-lg p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2 text-xs">
+                            {isCashedOut ? (
+                              <span className="font-black text-amber-700">
+                                {bi('ካሽአውት', 'Cashed Out')} ({t.currentMinute}&apos;)
+                              </span>
+                            ) : isWon ? (
+                              <span className="font-black text-[#0E8A38]">{bi('አሸናፊ', 'Won')} (90&apos; FT)</span>
+                            ) : (
+                              <span className="font-black text-rose-600">{bi('ተሸናፊ', 'Lost')} (90&apos; FT)</span>
+                            )}
+                            <span aria-hidden="true">·</span>
+                            <span className="font-mono-num text-slate-500">
+                              {t.picksCount} {bi('ጨዋታ', 'legs')} ({t.totalOdds.toFixed(2)}x)
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-700 truncate">{t.resultText || t.choiceText}</p>
+                        </div>
+
+                        <div className="flex items-center gap-3 shrink-0 text-xs font-mono-num">
+                          <span className="text-slate-500">{formatETB(t.betAmount)}</span>
+                          <span
+                            className={`font-black ${
+                              isWon ? 'text-[#0E8A38]' : isCashedOut ? 'text-amber-700' : 'text-rose-600'
+                            }`}
+                          >
+                            {t.payout > 0 ? `+${formatETB(t.payout)}` : `-${formatETB(t.betAmount)}`}
+                          </span>
+                          {t.payout > 0 ? (
+                            <CheckCircle2 className="w-4 h-4 text-[#0E8A38]" />
+                          ) : (
+                            <XCircle className="w-4 h-4 text-rose-500" />
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <aside className="hidden lg:block lg:col-span-4 lg:sticky lg:top-28">
+            {renderBetslipBody()}
+          </aside>
+        </div>
+      )}
+
+      {/* WORKSPACE 3: PROMOTIONS, SPOTLIGHTS, MOST-BET, ALERTS & RULES (ማስታወቂያ) */}
+      {subTab === 'promos' && (
+        <div className="space-y-4">
           {/* Hero Stadium Spotlight Banner */}
-          <section className="relative rounded-xl overflow-hidden border border-slate-200 shadow-sm min-h-[155px] sm:min-h-[190px] flex items-end bg-slate-900">
+          <section className="relative rounded-xl overflow-hidden border border-slate-200 shadow-sm min-h-[165px] sm:min-h-[200px] flex items-end bg-slate-900">
             <img
               src={stadiumBannerImg}
               alt={bi('እድል ቤት ስታዲየም', 'Edil Bet Football Stadium')}
@@ -2541,9 +2956,10 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
               </div>
               <button
                 type="button"
-                onClick={() =>
-                  topMatchesRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-                }
+                onClick={() => {
+                  setSubTab('betting');
+                  onChangeSportsSection?.('sport');
+                }}
                 className="self-start sm:self-end px-4 py-2.5 rounded-lg bg-white hover:bg-[#9AD84B] text-[#0E8A38] hover:text-slate-950 font-black text-xs sm:text-sm transition cursor-pointer whitespace-nowrap shadow-sm"
               >
                 {bi('አሁን ተወራረድ', 'BET NOW')}
@@ -2551,57 +2967,29 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
             </div>
           </section>
 
-          {/* TOP MATCHES HORIZONTAL CAROUSEL (Matching Screenshot #1) */}
-          <section
-            ref={topMatchesRef}
-            className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs"
-          >
+          {/* Featured Top Matches Carousel */}
+          <section className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
             <div className="bg-[#0E8A38] text-white px-4 py-2.5 flex flex-wrap items-center justify-between gap-2">
               <div className="flex flex-wrap items-center gap-2 min-w-0">
                 <h3 className="text-sm font-extrabold flex items-center gap-2">
-                  <span aria-hidden="true" className="text-[#9AD84B] tracking-widest text-xs">
-                    •••
-                  </span>
-                  <span>{bi('ዋና ጨዋታዎች · Online Real Program', 'Top Matches · Online Program')}</span>
+                  <Zap className="w-4 h-4 text-[#9AD84B]" />
+                  <span>{bi('ዋና ተጠባቂ ጨዋታዎች · Featured Matches', 'Featured Matches')}</span>
                 </h3>
                 <span className="text-[11px] font-semibold text-emerald-100 truncate">
                   ({providerLabel})
                 </span>
               </div>
-              <div className="flex items-center gap-2">
-                {liveMatchesCount > 0 && (
-                  <span className="text-[11px] font-mono-num font-black text-[#9AD84B] flex items-center gap-1">
-                    <Radio className="w-3.5 h-3.5" />
-                    {liveMatchesCount} LIVE
-                  </span>
-                )}
-                <span className="text-[11px] font-mono-num text-emerald-100">
-                  {syncedMatchesCount > 0
-                    ? `${syncedMatchesCount} ${bi('ኦንላይን ጨዋታ', 'online')}`
-                    : `${topMatchesCarousel.length} ${bi('ጨዋታ', 'matches')}`}
-                </span>
-                <button
-                  type="button"
-                  disabled={syncingSchedule}
-                  onClick={() => {
-                    void loadLiveSchedule(true, true);
-                    void syncLiveResultsFromProvider(false);
-                  }}
-                  className="px-2 py-1 rounded bg-black/25 hover:bg-black/40 text-[11px] font-bold text-white cursor-pointer disabled:opacity-50 transition"
-                >
-                  {syncingSchedule ? bi('በማደስ ላይ...', 'Syncing...') : bi('አድስ', 'Refresh')}
-                </button>
-              </div>
+              <a
+                href="https://www.besoccer.com/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-2.5 py-1 rounded bg-black/25 hover:bg-black/40 text-[11px] font-bold text-white flex items-center gap-1 transition whitespace-nowrap"
+              >
+                <span>BeSoccer</span>
+                <ExternalLink className="w-3 h-3 text-[#9AD84B]" />
+              </a>
             </div>
 
-            {!scheduleLoaded && scheduleMatches.length === 0 ? (
-              <div className="p-6 text-center text-xs font-bold text-slate-600 bg-[#F3F4F6]">
-                {bi(
-                  'ትክክለኛ የኦንላይን የእግር ኳስ ፕሮግራም ከቀጥታ API ሰርቨር በመጫን ላይ ነው...',
-                  'Loading real-time online football schedule, odds & live matches...',
-                )}
-              </div>
-            ) : (
             <div className="p-3 bg-[#F3F4F6] flex gap-3 overflow-x-auto snap-x no-scrollbar">
               {topMatchesCarousel.map((match) => {
                 const selectedPick = picks.find((p) => p.match.id === match.id);
@@ -2609,7 +2997,7 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
                 return (
                   <article
                     key={`top_${match.id}`}
-                    className="w-[84vw] max-w-[300px] sm:w-[300px] snap-start bg-white border border-slate-200 rounded-lg p-3 space-y-2.5 shrink-0"
+                    className="w-[82vw] max-w-[290px] sm:w-[290px] snap-start bg-white border border-slate-200 rounded-lg p-3 space-y-2.5 shrink-0"
                   >
                     <div className="flex items-center justify-between gap-2 text-[11px]">
                       <span className="font-bold text-slate-700 truncate max-w-[58%]">
@@ -2631,7 +3019,6 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
                         playGameSound('click', soundEnabled);
                         setMarketsMatchId(match.id);
                       }}
-                      title={bi('ሁሉንም የመቆመር ዘዴዎች ክፈት', 'Click match to choose from 135+ betting styles')}
                       className="w-full flex items-center justify-between gap-2 py-1.5 px-1 rounded-lg hover:bg-[#EAF3ED]/60 transition cursor-pointer disabled:cursor-not-allowed group"
                     >
                       <div className="flex flex-col items-center text-center gap-1 flex-1 min-w-0">
@@ -2667,918 +3054,113 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
                       </div>
                     </button>
 
-                    <div className="border-t border-slate-100 pt-2 space-y-1.5">
-                      <div className="flex items-center justify-between gap-2 text-[11px] text-slate-500">
-                        <span className="font-semibold truncate">
-                          {bi('የጨዋታ ውጤት', 'Match Result')}
-                        </span>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          {match.isLive && (
-                            <button
-                              type="button"
-                              onClick={() => openMatchLiveVideo(match)}
-                              className="px-2 py-1 rounded bg-rose-600 hover:bg-rose-700 text-white font-black text-[10px] inline-flex items-center gap-1 cursor-pointer transition"
-                            >
-                              <Tv className="w-3 h-3" />
-                              <span>{bi('ቪድዮ', 'TV')}</span>
-                            </button>
-                          )}
+                    <div className="grid grid-cols-3 gap-1.5 pt-1 border-t border-slate-100">
+                      {(['1', 'X', '2'] as const).map((mkt) => {
+                        const active = selectedPick?.market === mkt;
+                        return (
                           <button
-                            type="button"
-                            onClick={() => {
-                              playGameSound('click', soundEnabled);
-                              setStatsMatchId(match.id);
-                            }}
-                            className="px-2 py-1 rounded bg-slate-100 hover:bg-[#EAF3ED] border border-slate-200 text-[#0E8A38] font-black text-[10px] inline-flex items-center gap-1 cursor-pointer"
-                          >
-                            <BarChart3 className="w-3 h-3" />
-                            <span>Stats</span>
-                          </button>
-                          <button
+                            key={mkt}
                             type="button"
                             disabled={placingTicket || isLiveLocked}
                             onClick={() => {
-                              playGameSound('click', soundEnabled);
-                              setMarketsMatchId(match.id);
+                              togglePick(match, mkt);
+                              setSubTab('betting');
+                              onChangeSportsSection?.('sport');
                             }}
-                            className="font-mono-num font-extrabold text-[#0E8A38] hover:underline cursor-pointer"
+                            className={`min-h-[40px] px-2 rounded text-[11px] flex items-center justify-between gap-1 transition cursor-pointer disabled:opacity-45 ${
+                              active
+                                ? 'bg-[#0E8A38] text-white font-black'
+                                : 'bg-[#E5E7EB] hover:bg-slate-300 text-slate-900 font-bold'
+                            }`}
                           >
-                            +135
+                            <span>{mkt}</span>
+                            <span className="font-mono-num font-black">
+                              {getScaledOdd(match.odds[mkt]).toFixed(2)}
+                            </span>
                           </button>
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-3 gap-1.5">
-                        {(
-                          [
-                            ['1', bi('ባለሜዳ', 'Home')],
-                            ['X', bi('አቻ', 'Draw')],
-                            ['2', bi('እንግዳ', 'Away')],
-                          ] as const
-                        ).map(([mkt, label]) => {
-                          const active = selectedPick?.market === mkt;
-                          return (
-                            <button
-                              key={mkt}
-                              type="button"
-                              disabled={placingTicket || isLiveLocked}
-                              onClick={() => togglePick(match, mkt)}
-                              className={`min-h-[42px] px-2 rounded text-[11px] flex items-center justify-between gap-1 transition cursor-pointer disabled:opacity-45 ${
-                                active
-                                  ? 'bg-[#0E8A38] text-white font-black'
-                                  : 'bg-[#E5E7EB] hover:bg-slate-300 text-slate-900 font-bold'
-                              }`}
-                            >
-                              <span className="truncate">{label}</span>
-                              <span className="font-mono-num font-black shrink-0">
-                                {getScaledOdd(match.odds[mkt]).toFixed(2)}
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
+                        );
+                      })}
                     </div>
                   </article>
                 );
               })}
             </div>
-            )}
           </section>
 
-          {/* MAIN 2-COLUMN SPORTSBOOK BOARD + BETSLIP */}
-          <div className="grid lg:grid-cols-12 gap-4 items-start">
-            {/* LEFT 8 COLS: SPORTSBOOK TABLES */}
-            <div className="lg:col-span-8 space-y-4">
-              {/* SECTION 1: TOP LEAGUES (Matching Screenshot #2) */}
-              <section className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
-                <div className="bg-[#0E8A38] text-white px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="text-sm font-extrabold flex items-center gap-2">
-                    <span aria-hidden="true" className="text-[#9AD84B] tracking-widest text-xs">
-                      •••
-                    </span>
-                    <span>{bi('ዋና ሊጎች · Top Leagues', 'Top Leagues')}</span>
-                  </h3>
+          {/* Most-Bet Teams & Popular Picks */}
+          <FootballMostBet
+            matches={scheduleMatches}
+            popularity={popularity}
+            selectedPicksByMatch={selectedPicksByMatch}
+            disabled={placingTicket}
+            onQuickPick={togglePick}
+            onOpenMarkets={(m) => {
+              playGameSound('click', soundEnabled);
+              setMarketsMatchId(m.id);
+            }}
+            onOpenStats={(m) => {
+              playGameSound('click', soundEnabled);
+              setStatsMatchId(m.id);
+            }}
+          />
 
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    {TIER_OPTIONS.map((tier) => (
-                      <button
-                        key={String(tier.id)}
-                        type="button"
-                        onClick={() => {
-                          playGameSound('click', soundEnabled);
-                          setTierFilter(tier.id);
-                          if (
-                            tier.id !== 'all' &&
-                            leagueFilter !== 'all' &&
-                            LEAGUE_OPTIONS.find((l) => l.id === leagueFilter)?.tier !== tier.id
-                          ) {
-                            setLeagueFilter('all');
-                          }
-                        }}
-                        className={`px-2.5 py-1 rounded text-[11px] font-extrabold transition cursor-pointer whitespace-nowrap ${
-                          tierFilter === tier.id
-                            ? 'bg-[#9AD84B] text-slate-950'
-                            : 'bg-black/20 text-white hover:bg-black/30'
-                        }`}
-                      >
-                        {tier.id === 'all' ? bi('ሁሉም', 'All') : `Tier ${tier.id}`}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Horizontal League Switcher Strip (Active = #9AD84B Lime) */}
-                <div className="p-2.5 bg-[#F3F4F6] border-b border-slate-200 flex items-center gap-2 overflow-x-auto">
-                  {LEAGUE_OPTIONS.filter(
-                    (l) => l.id === 'all' || tierFilter === 'all' || l.tier === tierFilter,
-                  ).map((league) => {
-                    const active = leagueFilter === league.id;
-                    return (
-                      <button
-                        key={league.id}
-                        type="button"
-                        onClick={() => {
-                          playGameSound('click', soundEnabled);
-                          setLeagueFilter(league.id);
-                        }}
-                        className={`px-3.5 py-2.5 rounded-lg text-xs font-extrabold whitespace-nowrap shrink-0 transition cursor-pointer border ${
-                          active
-                            ? 'bg-[#9AD84B] border-[#7EC135] text-slate-950 shadow-2xs'
-                            : 'bg-white border-slate-200 text-slate-800 hover:border-[#0E8A38]/50'
-                        }`}
-                      >
-                        {league.id === 'all' ? bi('ሁሉም ሊጎች', 'All Leagues') : league.label}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {/* Table Column Headers */}
-                <div className="sm:hidden px-3 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between text-[11px] font-bold text-slate-600">
-                  <span>{bi('ጨዋታዎች እና የ1 / X / 2 ኦዶች', 'Matches & 1 / X / 2 Odds')}</span>
-                  <span>{bi('ስታትስ / +135', 'Stats / +135')}</span>
-                </div>
-                <div className="hidden sm:grid sm:grid-cols-[64px_1fr_repeat(3,64px)_118px] items-center gap-1 px-3 py-2 bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-600">
-                  <span>{bi('ሰዓት', 'Time')}</span>
-                  <span>{bi('ጨዋታ', 'Event')}</span>
-                  <span className="text-center">{bi('1', 'Home')}</span>
-                  <span className="text-center">{bi('X', 'Draw')}</span>
-                  <span className="text-center">{bi('2', 'Away')}</span>
-                  <span className="text-center">{bi('አስታውስ/+', 'Alert/+')}</span>
-                </div>
-
-                {visibleLeagueRows.length === 0 ? (
-                  <div className="p-6 text-center text-xs text-slate-600 space-y-2">
-                    <p>{bi('በዚህ ሊግ ውስጥ ጨዋታ አልተገኘም', 'No matches found for this filter.')}</p>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setOnlyMyBets(false);
-                        setTierFilter('all');
-                        setLeagueFilter('all');
-                        setSearchQuery('');
-                      }}
-                      className="px-3.5 py-1.5 rounded bg-[#0E8A38] text-white font-bold cursor-pointer"
-                    >
-                      {bi('ሁሉንም አሳይ', 'Reset Filters')}
-                    </button>
-                  </div>
-                ) : (
-                  <div>
-                    {groupMatchesByDate(visibleLeagueRows).map((dateGroup) => (
-                      <div key={`lg_${dateGroup.dateKey}`}>
-                        <div className="px-3 py-1.5 bg-[#EAF3ED] border-b border-slate-200 text-xs font-extrabold text-[#0E8A38] font-mono-num">
-                          {dateGroup.label}
-                        </div>
-                        {dateGroup.matches.map((m) => renderSportsbookTableRow(m, m.isLive))}
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {topLeagueSectionMatches.length > 6 && (
-                  <div className="flex border-t border-slate-200 bg-slate-50">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setLeagueLimit((prev) =>
-                          prev >= topLeagueSectionMatches.length ? 6 : prev + 10,
-                        )
-                      }
-                      className="flex-1 py-2.5 hover:bg-slate-100 text-xs font-extrabold text-slate-700 flex items-center justify-center gap-1 cursor-pointer transition"
-                    >
-                      <span>
-                        {leagueLimit >= topLeagueSectionMatches.length
-                          ? bi('አሳንስ', 'Show less')
-                          : `${bi('ተጨማሪ አሳይ', 'Show more')} (${topLeagueSectionMatches.length - visibleLeagueRows.length})`}
-                      </span>
-                      {leagueLimit >= topLeagueSectionMatches.length ? (
-                        <ChevronUp className="w-4 h-4" />
-                      ) : (
-                        <ChevronDown className="w-4 h-4" />
-                      )}
-                    </button>
-                    {leagueLimit < topLeagueSectionMatches.length && (
-                      <button
-                        type="button"
-                        onClick={() => setLeagueLimit(topLeagueSectionMatches.length)}
-                        className="px-4 py-2.5 border-l border-slate-200 hover:bg-slate-100 text-xs font-black text-[#0E8A38] cursor-pointer transition whitespace-nowrap"
-                      >
-                        {bi(`ሁሉንም (${topLeagueSectionMatches.length})`, `All (${topLeagueSectionMatches.length})`)}
-                      </button>
-                    )}
-                  </div>
-                )}
-              </section>
-
-              {/* SECTION 2: LIVE EVENTS TABLE (Hidden when specifically browsing Upcoming) */}
-              {sportsSection !== 'upcoming' && (
-                <section
-                  ref={liveEventsRef}
-                  className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs"
-                >
-                  <div className="bg-[#0E8A38] text-white px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2">
-                    <h3 className="text-sm font-extrabold flex items-center gap-2">
-                      <span aria-hidden="true" className="text-[#9AD84B] tracking-widest text-xs">
-                        •••
-                      </span>
-                      <span>{bi('ቀጥታ ጨዋታዎች · Live Events & TV', 'Live Events & Video')}</span>
-                    </h3>
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          playGameSound('click', soundEnabled);
-                          setInlineVideoOpen((prev) => !prev);
-                        }}
-                        className={`px-2.5 py-1 rounded text-[11px] font-black flex items-center gap-1 cursor-pointer transition ${
-                          inlineVideoOpen
-                            ? 'bg-rose-600 text-white'
-                            : 'bg-black/25 hover:bg-black/40 text-white'
-                        }`}
-                      >
-                        <Tv className="w-3.5 h-3.5" />
-                        <span>
-                          {inlineVideoOpen
-                            ? bi('ቪድዮ ደብቅ', 'Hide TV')
-                            : bi('በቪድዮ ይመልከቱ', 'Watch Live TV')}
-                        </span>
-                      </button>
-                      <span className="px-2.5 py-0.5 rounded bg-[#9AD84B] text-slate-950 font-mono-num text-[11px] font-black">
-                        {liveMatchesList.length} LIVE
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Embedded Live TV Broadcast Video Player */}
-                  {inlineVideoOpen && liveMatchesList.length > 0 && (
-                    <div className="p-3 bg-[#081018] border-b border-slate-200">
-                      <LiveMatchVideoPlayer
-                        feeds={liveMatchesList.map(matchToBroadcastFeed)}
-                        activeFeedId={
-                          activeVideoMatchId &&
-                          liveMatchesList.some((m) => m.id === activeVideoMatchId)
-                            ? activeVideoMatchId
-                            : liveMatchesList[0].id
-                        }
-                        onSelectFeed={(id) => setActiveVideoMatchId(id)}
-                        soundEnabled={soundEnabled}
-                        onToggleSound={onToggleSound}
-                        mode="inline"
-                        onExpandTheater={() => {
-                          const targetId =
-                            activeVideoMatchId &&
-                            liveMatchesList.some((m) => m.id === activeVideoMatchId)
-                              ? activeVideoMatchId
-                              : liveMatchesList[0].id;
-                          setModalVideoState({
-                            source: 'live_matches',
-                            activeId: targetId,
-                          });
-                        }}
-                        selectedMarket={
-                          selectedPicksByMatch[
-                            activeVideoMatchId &&
-                            liveMatchesList.some((m) => m.id === activeVideoMatchId)
-                              ? activeVideoMatchId
-                              : liveMatchesList[0].id
-                          ]
-                        }
-                        getScaledOdd={getScaledOdd}
-                        onQuickPick={togglePick}
-                        onOpenMarkets={(m) => {
-                          playGameSound('click', soundEnabled);
-                          setMarketsMatchId(m.id);
-                        }}
-                      />
-                    </div>
-                  )}
-
-                  <div className="sm:hidden px-3 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between text-[11px] font-bold text-slate-600">
-                    <span>{bi('ቀጥታ ውጤት እና ኦዶች', 'Live Score & 1 / X / 2')}</span>
-                    <span>{bi('ቪድዮ / +135', 'Video / +135')}</span>
-                  </div>
-                  <div className="hidden sm:grid sm:grid-cols-[64px_1fr_repeat(3,64px)_118px] items-center gap-1 px-3 py-2 bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-600">
-                    <span>{bi('ውጤት', 'Score')}</span>
-                    <span>{bi('ጨዋታ', 'Event')}</span>
-                    <span className="text-center">{bi('1', 'Home')}</span>
-                    <span className="text-center">{bi('X', 'Draw')}</span>
-                    <span className="text-center">{bi('2', 'Away')}</span>
-                    <span className="text-center">{bi('ስታትስ', 'Stats/+')}</span>
-                  </div>
-
-                  {visibleLiveRows.length === 0 ? (
-                    <div className="p-6 text-center text-xs text-slate-600 space-y-2">
-                      <p className="font-semibold text-slate-700">
-                        {bi(
-                          'በዚህ ሰዓት በቀጥታ እየተካሄደ ያለ ኦንላይን ጨዋታ የለም — የዛሬ እና የ7 ቀናት ኦንላይን ፕሮግራሞች ላይ በቀጥታ መወራረድ ይችላሉ።',
-                          'No live online matches in progress right at this minute — place your bets on today’s & 7-day real online fixtures above/below.',
-                        )}
-                      </p>
-                    </div>
-                  ) : (
-                    <div>{visibleLiveRows.map((m) => renderSportsbookTableRow(m, true))}</div>
-                  )}
-
-                  {liveMatchesList.length > 7 && (
-                    <div className="flex border-t border-slate-200 bg-slate-50">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setLiveLimit((prev) =>
-                            prev >= liveMatchesList.length ? 7 : prev + 12,
-                          )
-                        }
-                        className="flex-1 py-2.5 hover:bg-slate-100 text-xs font-extrabold text-slate-700 flex items-center justify-center gap-1 cursor-pointer transition"
-                      >
-                        <span>
-                          {liveLimit >= liveMatchesList.length
-                            ? bi('አሳንስ', 'Show less')
-                            : `${bi('ተጨማሪ አሳይ', 'Show more')} (${liveMatchesList.length - visibleLiveRows.length})`}
-                        </span>
-                      </button>
-                      {liveLimit < liveMatchesList.length && (
-                        <button
-                          type="button"
-                          onClick={() => setLiveLimit(liveMatchesList.length)}
-                          className="px-4 py-2.5 border-l border-slate-200 hover:bg-slate-100 text-xs font-black text-[#0E8A38] cursor-pointer transition whitespace-nowrap"
-                        >
-                          {bi(`ሁሉንም (${liveMatchesList.length})`, `All (${liveMatchesList.length})`)}
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </section>
+          {/* 15-Minute Pre-Match Push Notifications Controls */}
+          <div className="bg-white border border-slate-200 rounded-xl px-3.5 py-3 flex flex-wrap items-center justify-between gap-2 shadow-2xs text-xs">
+            <div className="flex items-center gap-2 min-w-0">
+              {pushEnabled ? (
+                <BellRing className="w-4 h-4 text-[#0E8A38] shrink-0" />
+              ) : (
+                <BellOff className="w-4 h-4 text-slate-400 shrink-0" />
               )}
-
-              {/* SECTION 3: 7-DAY SCHEDULE & POPULAR MATCHES (Matching Screenshots #3 & #4) */}
-              <section className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
-                <div className="bg-[#0E8A38] text-white px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="text-sm font-extrabold flex items-center gap-2">
-                    <span aria-hidden="true" className="text-[#9AD84B] tracking-widest text-xs">
-                      •••
-                    </span>
-                    <span>
-                      {bi(
-                        'ተወዳጅ እና የ7 ቀናት ፕሮግራም · 7-Day Program',
-                        'Popular Matches & 7-Day Schedule',
-                      )}
-                    </span>
-                  </h3>
-
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={onlyMyBets}
-                    onClick={() => {
-                      playGameSound('click', soundEnabled);
-                      const next = !onlyMyBets;
-                      setOnlyMyBets(next);
-                      if (next && timeframeFilter === 'live') setTimeframeFilter('all');
-                    }}
-                    className={`px-2.5 py-1 rounded text-[11px] font-extrabold flex items-center gap-1.5 cursor-pointer transition ${
-                      onlyMyBets
-                        ? 'bg-[#9AD84B] text-slate-950'
-                        : 'bg-black/25 text-white hover:bg-black/35'
-                    }`}
-                  >
-                    <CheckCircle2 className="w-3.5 h-3.5" />
-                    <span>
-                      {bi('የተወራረድኩባቸው ብቻ', 'My Betted Only')} ({upcomingBettedCount})
-                    </span>
-                  </button>
-                </div>
-
-                {/* 7-Day Calendar & Timeframe Filter Strip */}
-                <div className="p-2.5 bg-[#F8FAFC] border-b border-slate-200 space-y-2">
-                  <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 no-scrollbar">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        playGameSound('click', soundEnabled);
-                        setDayFilter('all');
-                      }}
-                      className={`px-3 py-1.5 rounded text-xs font-extrabold whitespace-nowrap shrink-0 cursor-pointer ${
-                        dayFilter === 'all'
-                          ? 'bg-[#0E8A38] text-white'
-                          : 'bg-white border border-slate-200 text-slate-700 hover:border-[#0E8A38]'
-                      }`}
-                    >
-                      {bi('ቀጣይ 7 ቀናት', 'Next 7 Days')}
-                    </button>
-                    {next7Days.map((day) => (
-                      <button
-                        key={day.dateKey}
-                        type="button"
-                        onClick={() => {
-                          playGameSound('click', soundEnabled);
-                          setDayFilter(day.dateKey);
-                          setTimeframeFilter('all');
-                        }}
-                        className={`px-2.5 py-1.5 rounded text-xs font-bold whitespace-nowrap shrink-0 flex items-center gap-1 cursor-pointer ${
-                          dayFilter === day.dateKey
-                            ? 'bg-[#9AD84B] text-slate-950 font-black'
-                            : 'bg-white border border-slate-200 text-slate-700 hover:border-[#0E8A38]'
-                        }`}
-                      >
-                        <span>{day.shortLabel}</span>
-                        <span className="font-mono-num opacity-75">
-                          ({dayCounts[day.dateKey] || 0})
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-
-                  <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-                    {TIMEFRAME_OPTIONS.map((tf) => (
-                      <button
-                        key={tf.id}
-                        type="button"
-                        onClick={() => {
-                          playGameSound('click', soundEnabled);
-                          setTimeframeFilter(tf.id);
-                          if (tf.id !== 'all') setDayFilter('all');
-                        }}
-                        className={`px-2.5 py-1 rounded text-[11px] font-bold whitespace-nowrap shrink-0 cursor-pointer ${
-                          timeframeFilter === tf.id
-                            ? 'bg-slate-900 text-white'
-                            : 'bg-slate-200/70 text-slate-700 hover:bg-slate-300'
-                        }`}
-                      >
-                        {tf.label} ({timeframeCounts[tf.id]})
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="sm:hidden px-3 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between text-[11px] font-bold text-slate-600">
-                  <span>{bi('ጨዋታዎች እና የ1 / X / 2 ኦዶች', 'Matches & 1 / X / 2 Odds')}</span>
-                  <span>{bi('ስታትስ / +135', 'Stats / +135')}</span>
-                </div>
-                <div className="hidden sm:grid sm:grid-cols-[64px_1fr_repeat(3,64px)_118px] items-center gap-1 px-3 py-2 bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-600">
-                  <span>{bi('ሰዓት', 'Time')}</span>
-                  <span>{bi('ጨዋታ', 'Event')}</span>
-                  <span className="text-center">{bi('1', 'Home')}</span>
-                  <span className="text-center">{bi('X', 'Draw')}</span>
-                  <span className="text-center">{bi('2', 'Away')}</span>
-                  <span className="text-center">{bi('አስታውስ/+', 'Alert/+')}</span>
-                </div>
-
-                {visiblePopularRows.length === 0 ? (
-                  <div className="p-8 text-center space-y-2 text-xs text-slate-700">
-                    <p className="font-bold">
-                      {onlyMyBets
-                        ? bi(
-                            'ውርርድ የቆረጡበት ቀጣይ ጨዋታ አልተገኘም',
-                            'No upcoming betted matches match these filters',
-                          )
-                        : bi('በዚህ ማጣሪያ ውስጥ ጨዋታ አልተገኘም', 'No matches found')}
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setOnlyMyBets(false);
-                        setTimeframeFilter('all');
-                        setDayFilter('all');
-                        setTierFilter('all');
-                        setLeagueFilter('all');
-                        setSearchQuery('');
-                      }}
-                      className="px-4 py-2 rounded bg-[#0E8A38] text-white font-bold cursor-pointer"
-                    >
-                      {bi('ሁሉንም ጨዋታዎች አሳይ', 'Show All Matches')}
-                    </button>
-                  </div>
-                ) : (
-                  <div>
-                    {groupMatchesByDate(visiblePopularRows).map((dateGroup) => (
-                      <div key={`pop_${dateGroup.dateKey}`}>
-                        <div className="px-3 py-1.5 bg-[#EAF3ED] border-b border-slate-200 text-xs font-extrabold text-[#0E8A38] font-mono-num">
-                          {dateGroup.label}
-                        </div>
-                        {dateGroup.matches.map((m) => renderSportsbookTableRow(m, m.isLive))}
-                      </div>
-                    ))}
-                  </div>
+              <span className="font-bold text-slate-800 truncate">
+                {bi(
+                  `ከጨዋታ መጀመር 15 ደቂቃ በፊት ማንቂያ (${remindMatchIds.length} Remind Me · ${upcomingBettedCount} ውርርድ)`,
+                  `15m Pre-Match Alerts (${remindMatchIds.length} Remind Me · ${upcomingBettedCount} Betted)`,
                 )}
-
-                {filteredMatches.length > 10 && (
-                  <div className="flex border-t border-slate-200 bg-slate-50">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setPopularLimit((prev) =>
-                          prev >= filteredMatches.length ? 10 : prev + 15,
-                        )
-                      }
-                      className="flex-1 py-2.5 hover:bg-slate-100 text-xs font-extrabold text-slate-700 flex items-center justify-center gap-1 cursor-pointer transition"
-                    >
-                      <span>
-                        {popularLimit >= filteredMatches.length
-                          ? bi('አሳንስ', 'Show less')
-                          : `${bi('ተጨማሪ አሳይ', 'Show more')} (${filteredMatches.length - visiblePopularRows.length})`}
-                      </span>
-                      {popularLimit >= filteredMatches.length ? (
-                        <ChevronUp className="w-4 h-4" />
-                      ) : (
-                        <ChevronDown className="w-4 h-4" />
-                      )}
-                    </button>
-                    {popularLimit < filteredMatches.length && (
-                      <button
-                        type="button"
-                        onClick={() => setPopularLimit(filteredMatches.length)}
-                        className="px-4 py-2.5 border-l border-slate-200 hover:bg-slate-100 text-xs font-black text-[#0E8A38] cursor-pointer transition whitespace-nowrap"
-                      >
-                        {bi(`ሁሉንም (${filteredMatches.length})`, `All (${filteredMatches.length})`)}
-                      </button>
-                    )}
-                  </div>
-                )}
-              </section>
-
-              {/* MOST-BET TEAMS & WIN PROBABILITY */}
-              <FootballMostBet
-                matches={scheduleMatches}
-                popularity={popularity}
-                selectedPicksByMatch={selectedPicksByMatch}
-                disabled={placingTicket}
-                onQuickPick={togglePick}
-                onOpenMarkets={(m) => {
-                  playGameSound('click', soundEnabled);
-                  setMarketsMatchId(m.id);
-                }}
-                onOpenStats={(m) => {
-                  playGameSound('click', soundEnabled);
-                  setStatsMatchId(m.id);
-                }}
-              />
-            </div>
-
-            {/* RIGHT 4 COLS: STICKY DESKTOP BETSLIP */}
-            <aside className="hidden lg:block lg:col-span-4 lg:sticky lg:top-28">
-              {renderBetslipBody()}
-            </aside>
-          </div>
-        </div>
-      )}
-
-      {/* TAB 2: LIVE MATCH & CASHOUT CENTER */}
-      {subTab === 'live' && (
-        <div className="space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                setSubTab('fixtures');
-                onChangeSportsSection?.('sport');
-              }}
-              className="min-h-[42px] px-3.5 py-2 rounded-lg bg-white hover:bg-slate-100 border border-slate-200 text-slate-800 text-xs font-black flex items-center gap-1.5 cursor-pointer transition shadow-2xs"
-            >
-              <ArrowLeft className="w-4 h-4 text-[#0E8A38]" />
-              <span>{bi('ወደ ጨዋታዎች ተመለስ', 'Back to Matches')}</span>
-            </button>
-
-            <div className="flex items-center gap-2">
-              {lastResultsSyncAt && (
-                <span className="hidden sm:inline text-[11px] font-mono-num text-slate-500">
-                  {bi('ውጤት ታድሷል', 'Synced')} · {new Date(lastResultsSyncAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </span>
-              )}
-              <button
-                type="button"
-                disabled={resultsSyncing}
-                onClick={() => {
-                  playGameSound('click', soundEnabled);
-                  void syncLiveResultsFromProvider(true);
-                }}
-                className="min-h-[42px] px-3.5 py-2 rounded-lg bg-white hover:bg-emerald-50 border border-slate-200 text-[#0E8A38] text-xs font-black flex items-center gap-1.5 cursor-pointer transition shadow-2xs disabled:opacity-50"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${resultsSyncing ? 'animate-spin' : ''}`} />
-                <span>{resultsSyncing ? bi('ውጤት በማምጣት ላይ...', 'Syncing Results...') : bi('ቀጥታ ውጤት አድስ', 'Sync Live Results')}</span>
-              </button>
-            </div>
-          </div>
-
-          <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-wrap items-center justify-between gap-3 shadow-xs">
-            <div className="flex items-center gap-2.5 text-xs sm:text-sm text-slate-700">
-              <ShieldCheck className="w-4 h-4 text-[#0E8A38] shrink-0" />
-              <span>
-                {bi('የካሽአውት ህግ:', 'Cashout Rule:')} <strong className="font-mono-num">{CASHOUT_MIN_MINUTE}&apos;–{CASHOUT_MAX_MINUTE}&apos;</strong> ·{' '}
-                <strong className="font-mono-num text-[#0E8A38]">{Math.round(CASHOUT_FEE_RATE * 100)}%</strong>{' '}
-                {bi('ክፍያ · ከፍተኛ', 'fee · Max')}{' '}
-                <strong className="font-mono-num">{Math.round(CASHOUT_MAX_PAYOUT_RATIO * 100)}%</strong>
               </span>
             </div>
-            <button
-              type="button"
-              onClick={() => setSubTab('rules')}
-              className="text-xs font-extrabold text-[#0E8A38] hover:underline cursor-pointer whitespace-nowrap"
-            >
-              {bi('ሙሉ ህግ አንብብ', 'Read Full Rules')}
-            </button>
-          </div>
 
-          {liveTickets.length === 0 ? (
-            <div className="bg-white border border-slate-200 rounded-xl p-8 text-center space-y-3 shadow-xs">
-              <p className="text-base font-extrabold text-slate-900">
-                {bi('አሁን ላይቭ እየተጫወተ ያለ ትኬት የለም', 'No active live tickets right now')}
-              </p>
-              <p className="text-xs sm:text-sm text-slate-600">
-                {bi(
-                  'ከጨዋታዎች ዝርዝር ትኬት ሲቆርጡ ወዲያውኑ እዚህ ላይቭ ገብተው የቀጥታ ውጤትና ካሽአውት ማድረግ ይችላሉ።',
-                  'Place a ticket from the schedule board to track live scores and cash out early.',
-                )}
-              </p>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <button
+                type="button"
+                onClick={() => void handleTogglePushEnabled()}
+                className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-extrabold cursor-pointer transition ${
+                  pushEnabled
+                    ? 'bg-[#EAF3ED] border-[#0E8A38]/40 text-[#0E8A38]'
+                    : 'bg-slate-100 border-slate-200 text-slate-600'
+                }`}
+              >
+                {pushEnabled ? bi('ማንቂያ: በርቷል', 'Alerts: ON') : bi('ማንቂያ: ጠፍቷል', 'Alerts: OFF')}
+              </button>
+
+              {browserPerm !== 'granted' && browserPerm !== 'unsupported' && (
+                <button
+                  type="button"
+                  onClick={() => void handleEnableBrowserPush()}
+                  className="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-[11px] font-bold cursor-pointer transition"
+                >
+                  {bi('የስልክ Push ፍቀድ', 'Enable Browser Push')}
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={() => {
-                  setSubTab('fixtures');
-                  onChangeSportsSection?.('sport');
+                  const target =
+                    scheduleMatches.find((m) => !m.isLive && (remindMatchSet.has(m.id) || getUserBetInfo(m))) ||
+                    scheduleMatches.find((m) => !m.isLive);
+                  if (target) {
+                    firePreMatchAlert(target, 15, 'preview');
+                  }
                 }}
-                className="px-5 py-2.5 rounded-lg bg-[#0E8A38] hover:bg-[#0B732E] text-white font-black text-xs sm:text-sm transition cursor-pointer"
+                className="px-2.5 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 text-[11px] font-bold cursor-pointer transition"
               >
-                {bi('ወደ ጨዋታዎች ፕሮግራም ተመለስ', 'Back to Matches')}
+                {bi('ማንቂያ ሞክር', 'Test 15m Alert')}
               </button>
             </div>
-          ) : (
-            <div className="space-y-4">
-              {liveTickets.map((ticket) => {
-                const snap = liveSimMap[ticket.id] || {
-                  minute: Math.max(1, ticket.currentMinute || 1),
-                  picks: ticket.picks,
-                };
-                const quote = computeFootballCashout(
-                  snap.picks,
-                  ticket.betAmount,
-                  ticket.potentialPayout,
-                  snap.minute,
-                );
-                const isBusy = busyTicketId === ticket.id;
-                const hitsCount = snap.picks.filter((p) => p.hit).length;
-
-                return (
-                  <article
-                    key={ticket.id}
-                    className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs"
-                  >
-                    <div className="bg-[#0E8A38] text-white px-4 py-3 flex flex-wrap items-center justify-between gap-2">
-                      <div>
-                        <p className="text-[11px] font-bold text-[#9AD84B] font-mono-num">
-                          LIVE · {snap.minute}&apos; / 90&apos; · {hitsCount}/{snap.picks.length}{' '}
-                          {bi('በማሸነፍ ላይ', 'winning')}
-                        </p>
-                        <h3 className="text-sm sm:text-base font-black">
-                          {bi('ትኬት', 'Ticket')} #{ticket.id.slice(-6).toUpperCase()} · {ticket.picksCount}{' '}
-                          {bi('ጨዋታ', 'legs')}
-                        </h3>
-                      </div>
-
-                      <div className="flex flex-wrap items-center gap-3 text-xs font-mono-num">
-                        <button
-                          type="button"
-                          onClick={() => openTicketLiveVideo(ticket.id)}
-                          className="px-2.5 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-sans font-black text-[11px] flex items-center gap-1 cursor-pointer transition"
-                        >
-                          <Tv className="w-3.5 h-3.5" />
-                          <span>{bi('በቪድዮ ተመልከት', 'Watch Live')}</span>
-                        </button>
-                        <div>
-                          <span className="text-emerald-100 block text-[10px]">{bi('መወራረጃ', 'Stake')}</span>
-                          <span className="font-black">{formatETB(ticket.betAmount)}</span>
-                        </div>
-                        <div>
-                          <span className="text-emerald-100 block text-[10px]">{bi('ኦድ', 'Odds')}</span>
-                          <span className="font-black text-[#9AD84B]">{ticket.totalOdds.toFixed(2)}x</span>
-                        </div>
-                        <div>
-                          <span className="text-emerald-100 block text-[10px]">{bi('90\' ሽልማት', '90\' Payout')}</span>
-                          <span className="font-black">{formatETB(ticket.potentialPayout)}</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="p-4 space-y-4">
-                      <div className="space-y-1">
-                        <div className="flex items-center justify-between text-[11px] font-mono-num text-slate-500">
-                          <span>0&apos;</span>
-                          <span className="text-[#0E8A38] font-bold">
-                            {bi('ካሽአውት መስኮት', 'Cashout Window')} ({CASHOUT_MIN_MINUTE}&apos;–{CASHOUT_MAX_MINUTE}&apos;)
-                          </span>
-                          <span>90&apos; FT</span>
-                        </div>
-                        <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-[#0E8A38] transition-all duration-300"
-                            style={{ width: `${Math.min(100, Math.round((snap.minute / 90) * 100))}%` }}
-                          />
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-                        {snap.picks.map((leg) => (
-                          <div
-                            key={leg.matchId}
-                            className={`border rounded-lg p-3 flex items-center justify-between gap-3 ${
-                              leg.hit ? 'bg-emerald-50/70 border-[#0E8A38]/40' : 'bg-slate-50 border-slate-200'
-                            }`}
-                          >
-                            <div className="min-w-0">
-                              <p className="text-xs sm:text-sm font-extrabold text-slate-900 truncate">
-                                {leg.home} vs {leg.away}
-                              </p>
-                              <p className="text-[11px] text-slate-600 mt-0.5">
-                                {leg.marketLabel || getMarketLabel(leg.market)}{' '}
-                                <span className="font-mono-num font-bold text-slate-900">
-                                  ({leg.odd.toFixed(2)}x)
-                                </span>
-                              </p>
-                              <p className="text-[11px] font-mono-num text-slate-500 mt-0.5">
-                                HT {leg.htHomeGoals ?? 0}-{leg.htAwayGoals ?? 0} ·{' '}
-                                {bi('ካርድ', 'Cards')} {(leg.homeCards ?? 0) + (leg.awayCards ?? 0)} ·{' '}
-                                {bi('ኮርነር', 'Corners')} {(leg.homeCorners ?? 0) + (leg.awayCorners ?? 0)}
-                              </p>
-                            </div>
-
-                            <div className="flex items-center gap-2 shrink-0">
-                              <button
-                                type="button"
-                                onClick={() => openTicketLiveVideo(ticket.id, leg.matchId)}
-                                title={bi('ይህን ጨዋታ በቪድዮ ይመልከቱ', 'Watch this leg live in video')}
-                                className="px-2 py-1.5 rounded bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-black inline-flex items-center gap-1 cursor-pointer transition"
-                              >
-                                <Tv className="w-3 h-3" />
-                                <span>{bi('ቪድዮ', 'TV')}</span>
-                              </button>
-                              <span className="font-mono-num text-sm font-black text-slate-900 bg-white border border-slate-200 px-2.5 py-1 rounded">
-                                {leg.homeGoals} - {leg.awayGoals}
-                              </span>
-                              {leg.hit ? (
-                                <CheckCircle2 className="w-5 h-5 text-[#0E8A38] shrink-0" />
-                              ) : (
-                                <Clock className="w-5 h-5 text-slate-400 shrink-0" />
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-
-                      <div className="pt-3 border-t border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                        <div className="space-y-0.5">
-                          <p className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                            {quote.eligible ? (
-                              <Banknote className="w-4 h-4 text-[#0E8A38] shrink-0" />
-                            ) : (
-                              <Lock className="w-4 h-4 text-rose-500 shrink-0" />
-                            )}
-                            <span>{quote.reason}</span>
-                          </p>
-                          {quote.eligible && (
-                            <p className="text-[11px] text-slate-500 font-mono-num">
-                              {bi(
-                                `12% ክፍያ ተቀንሶ ወዲያውኑ ወደ ቦርሳዎ የሚገባ: ${formatETB(quote.offer)}`,
-                                `Net instant payout after 12% fee: ${formatETB(quote.offer)}`,
-                              )}
-                            </p>
-                          )}
-                        </div>
-
-                        <div className="flex flex-wrap items-center gap-2 shrink-0">
-                          <button
-                            type="button"
-                            disabled={!quote.eligible || isBusy}
-                            onClick={() => handleCashout(ticket)}
-                            className={`px-4 py-2.5 min-h-[44px] rounded-lg font-extrabold text-xs sm:text-sm flex items-center gap-2 transition cursor-pointer whitespace-nowrap ${
-                              quote.eligible
-                                ? 'bg-[#0E8A38] hover:bg-[#0B732E] text-white'
-                                : 'bg-slate-200 text-slate-500 cursor-not-allowed'
-                            }`}
-                          >
-                            <Banknote className="w-4 h-4 shrink-0" />
-                            <span>
-                              {isBusy
-                                ? bi('በመፈጸም ላይ...', 'Processing...')
-                                : quote.eligible
-                                  ? `${bi('ካሽአውት ውሰድ', 'Cashout')} (${formatETB(quote.offer)})`
-                                  : bi('ካሽአውት ተዘግቷል', 'Cashout Locked')}
-                            </span>
-                          </button>
-
-                          <button
-                            type="button"
-                            disabled={isBusy}
-                            onClick={() => handleFastForwardToFullTime(ticket)}
-                            className="px-3.5 py-2.5 min-h-[44px] rounded-lg bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-800 font-bold text-xs flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap disabled:opacity-50"
-                          >
-                            <FastForward className="w-4 h-4 text-[#0E8A38] shrink-0" />
-                            <span>{bi("90' ጨርስ", "Finish 90'")}</span>
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-          )}
-
-          {settledTickets.length > 0 && (
-            <div className="bg-white border border-slate-200 rounded-xl p-4 sm:p-5 space-y-3 shadow-xs">
-              <h3 className="text-sm font-black text-slate-900">
-                {bi(
-                  `የቅርብ ጊዜ የተዘጉ እና ካሽአውት የተደረጉ ትኬቶች (${settledTickets.length})`,
-                  `Recent Settled & Cashed-Out Tickets (${settledTickets.length})`,
-                )}
-              </h3>
-              <div className="space-y-2">
-                {settledTickets.slice(0, 8).map((t) => {
-                  const isCashedOut = t.status === 'cashed_out';
-                  const isWon = t.status === 'won';
-                  return (
-                    <div
-                      key={t.id}
-                      className="bg-slate-50 border border-slate-200 rounded-lg p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2"
-                    >
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2 text-xs">
-                          {isCashedOut ? (
-                            <span className="font-black text-amber-700">
-                              {bi('ካሽአውት', 'Cashed Out')} ({t.currentMinute}&apos;)
-                            </span>
-                          ) : isWon ? (
-                            <span className="font-black text-[#0E8A38]">{bi('አሸናፊ', 'Won')} (90&apos; FT)</span>
-                          ) : (
-                            <span className="font-black text-rose-600">{bi('ተሸናፊ', 'Lost')} (90&apos; FT)</span>
-                          )}
-                          <span aria-hidden="true">·</span>
-                          <span className="font-mono-num text-slate-500">
-                            {t.picksCount} {bi('ጨዋታ', 'legs')} ({t.totalOdds.toFixed(2)}x)
-                          </span>
-                        </div>
-                        <p className="text-xs text-slate-700 truncate">{t.resultText || t.choiceText}</p>
-                      </div>
-
-                      <div className="flex items-center gap-3 shrink-0 text-xs font-mono-num">
-                        <span className="text-slate-500">{formatETB(t.betAmount)}</span>
-                        <span
-                          className={`font-black ${
-                            isWon ? 'text-[#0E8A38]' : isCashedOut ? 'text-amber-700' : 'text-rose-600'
-                          }`}
-                        >
-                          {t.payout > 0 ? `+${formatETB(t.payout)}` : `-${formatETB(t.betAmount)}`}
-                        </span>
-                        {t.payout > 0 ? (
-                          <CheckCircle2 className="w-4 h-4 text-[#0E8A38]" />
-                        ) : (
-                          <XCircle className="w-4 h-4 text-rose-500" />
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* TAB 3: COMPLETE FOOTBALL BETTING RULES & HOW-TO-BET GUIDE */}
-      {subTab === 'rules' && (
-        <section className="space-y-4">
-          <div className="flex items-center justify-between gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                setSubTab('fixtures');
-                onChangeSportsSection?.('sport');
-              }}
-              className="min-h-[42px] px-3.5 py-2 rounded-lg bg-white hover:bg-slate-100 border border-slate-200 text-slate-800 text-xs font-black flex items-center gap-1.5 cursor-pointer transition shadow-2xs"
-            >
-              <ArrowLeft className="w-4 h-4 text-[#0E8A38]" />
-              <span>{bi('ወደ ጨዋታዎች ተመለስ', 'Back to Matches')}</span>
-            </button>
           </div>
 
+          {/* Football Betting & Cashout Rules + How-To Guide */}
           <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
             <div className="bg-[#0E8A38] text-white px-4 py-3">
               <h3 className="text-base font-black">
@@ -3648,11 +3230,11 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
               </div>
             </div>
           </div>
-        </section>
+        </div>
       )}
 
       {/* MOBILE COMPACT FLOATING BETSLIP TRIGGER BAR (Positioned cleanly above bottom mobile nav) */}
-      {subTab === 'fixtures' && picks.length > 0 && !mobileSlipOpen && (
+      {(subTab === 'betting' || subTab === 'live') && picks.length > 0 && !mobileSlipOpen && (
         <div className="lg:hidden fixed bottom-[64px] left-3 right-3 z-30">
           <button
             type="button"

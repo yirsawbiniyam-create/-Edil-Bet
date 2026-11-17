@@ -1803,10 +1803,10 @@ export function mountApiRoutes(app: express.Express): void {
       const amount = Number(parseFloat(amountMatch[1].replace(/,/g, '')).toFixed(2));
       const transactionId = txIdMatch[1].trim().toUpperCase();
 
-      if (!Number.isFinite(amount) || amount < 100 || amount > 500000) {
+      if (!Number.isFinite(amount) || amount < 50 || amount > 500000) {
         res.status(400).json({
           success: false,
-          error: 'Parsed amount must be between 100 and 500,000 ETB',
+          error: 'Parsed amount must be between 50 and 500,000 ETB',
         });
         return;
       }
@@ -2049,11 +2049,11 @@ export function mountApiRoutes(app: express.Express): void {
                   txDoc.fields?.amount?.doubleValue ??
                   Number(txDoc.fields?.amount?.integerValue ?? 0);
                 const amount = Number(Number(rawAmount).toFixed(2));
-                if (!Number.isFinite(amount) || amount < 100 || amount > 500000) {
+                if (!Number.isFinite(amount) || amount < 50 || amount > 500000) {
                   await rollback();
                   res.status(400).json({
                     success: false,
-                    error: 'በSMS የተመዘገበው የብር መጠን ከተፈቀደው ገደብ (100 - 500,000 ብር) ውጭ ነው',
+                    error: 'በSMS የተመዘገበው የብር መጠን ከተፈቀደው ገደብ (50 - 500,000 ብር) ውጭ ነው',
                   });
                   return;
                 }

@@ -1,4 +1,5 @@
 import {
+  ChickenDifficulty,
   CoinChoice,
   D100Direction,
   DiceSubMode,
@@ -517,3 +518,86 @@ export function advanceLiveMatchTick(
     };
   });
 }
+
+export interface ChickenDifficultySpec {
+  key: ChickenDifficulty;
+  labelAm: string;
+  labelEn: string;
+  subtitleAm: string;
+  subtitleEn: string;
+  multipliers: number[];
+  fairStepProb: number;
+}
+
+export const CHICKEN_DIFFICULTY_SPECS: Record<ChickenDifficulty, ChickenDifficultySpec> = {
+  easy: {
+    key: 'easy',
+    labelAm: 'ቀላል (Easy)',
+    labelEn: 'Easy',
+    subtitleAm: '10 መስመር · ከፍተኛ የማለፍ እድል',
+    subtitleEn: '10 lanes · High pass chance',
+    multipliers: [1.15, 1.34, 1.58, 1.88, 2.25, 2.75, 3.4, 4.25, 5.4, 6.8],
+    fairStepProb: 0.78,
+  },
+  medium: {
+    key: 'medium',
+    labelAm: 'መካከለኛ (Medium)',
+    labelEn: 'Medium',
+    subtitleAm: '8 መስመር · ሚዛናዊ ሽልማት',
+    subtitleEn: '8 lanes · Balanced risk & reward',
+    multipliers: [1.28, 1.68, 2.25, 3.05, 4.2, 5.9, 8.5, 12.8],
+    fairStepProb: 0.68,
+  },
+  hard: {
+    key: 'hard',
+    labelAm: 'ከባድ (Hard)',
+    labelEn: 'Hard',
+    subtitleAm: '6 መስመር · ትልቅ መባዣ (20x)',
+    subtitleEn: '6 lanes · High multipliers up to 20x',
+    multipliers: [1.55, 2.45, 3.95, 6.5, 11.2, 20.0],
+    fairStepProb: 0.56,
+  },
+};
+
+export type ChickenHazardKind = 'truck' | 'cone' | 'cart';
+
+export interface ChickenRoundPlan {
+  difficulty: ChickenDifficulty;
+  multipliers: number[];
+  /** Number of consecutive lanes the chicken can safely cross before hitting a trap (0 = trap on lane 1, multipliers.length = clear all lanes). */
+  maxSafeStep: number;
+  laneHazards: ChickenHazardKind[];
+}
+
+export function generateChickenRoundPlan(
+  difficulty: ChickenDifficulty,
+  houseWinRate: number,
+): ChickenRoundPlan {
+  const spec = CHICKEN_DIFFICULTY_SPECS[difficulty];
+  const clampedBase = Math.min(0.5, Math.max(0.05, houseWinRate));
+  // Smooth multi-step edge scaling so early hops feel responsive while preserving platform house edge
+  const edgeFactor = 0.7 + (clampedBase / 0.5) * 0.3;
+  const effectiveStepProb = Math.min(0.84, Math.max(0.24, spec.fairStepProb * edgeFactor));
+
+  let maxSafeStep = 0;
+  for (let i = 0; i < spec.multipliers.length; i += 1) {
+    if (Math.random() < effectiveStepProb) {
+      maxSafeStep += 1;
+    } else {
+      break;
+    }
+  }
+
+  const hazardKinds: ChickenHazardKind[] = ['truck', 'cone', 'cart'];
+  const laneHazards: ChickenHazardKind[] = spec.multipliers.map(
+    () => hazardKinds[Math.floor(Math.random() * hazardKinds.length)],
+  );
+
+  return {
+    difficulty,
+    multipliers: spec.multipliers,
+    maxSafeStep,
+    laneHazards,
+  };
+}
+

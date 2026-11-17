@@ -1,6 +1,7 @@
 import { Timestamp } from 'firebase/firestore';
 
-export type GameCategory = 'dice' | 'coin' | 'lucky';
+export type GameCategory = 'chicken' | 'dice' | 'coin' | 'lucky';
+export type ChickenDifficulty = 'easy' | 'medium' | 'hard';
 export type DiceSubMode = 'single' | 'double' | 'd100';
 export type SingleDiceBetMode = 'low' | 'high' | 'exact';
 export type DoubleDiceBetMode = 'low' | 'lucky7' | 'high' | 'exact';
@@ -319,7 +320,7 @@ export interface BetRecord {
   id: string;
   uid: string;
   ownerPhone?: string;
-  gameType: 'dice_single' | 'dice_double' | 'dice_d100' | 'coin' | 'lucky' | 'football';
+  gameType: 'dice_single' | 'dice_double' | 'dice_d100' | 'coin' | 'lucky' | 'football' | 'chicken';
   gameName: string;
   betAmount: number;
   multiplier: number;

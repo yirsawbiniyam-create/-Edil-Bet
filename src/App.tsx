@@ -18,7 +18,6 @@ import {
   ArrowDownCircle,
   ArrowLeft,
   ArrowUpCircle,
-  CalendarClock,
   CheckCircle2,
   Coins,
   Copy,
@@ -27,11 +26,13 @@ import {
   ExternalLink,
   Eye,
   EyeOff,
+  Footprints,
   Gift,
   Globe,
   History,
   Info,
   KeyRound,
+  LayoutGrid,
   Lock,
   LogIn,
   LogOut,
@@ -46,14 +47,17 @@ import {
   X,
 } from 'lucide-react';
 import { AdminPanel } from './components/AdminPanel';
+import { ChickenJumpGame } from './components/ChickenJumpGame';
 import { FootballBetting, SportsSection } from './components/FootballBetting';
 import { GameLogo } from './components/GameLogo';
 import { GameArena } from './components/GameArena';
+import { GamesDashboard } from './components/GamesDashboard';
 import { HistoryPanel } from './components/HistoryPanel';
 import { LiveWinnersTicker } from './components/LiveWinnersTicker';
 import { WalletPanel } from './components/WalletPanel';
 import { WeeklyLeaderboard } from './components/WeeklyLeaderboard';
 import { WinConfetti } from './components/WinConfetti';
+import { buildFootballSchedule } from './lib/footballSchedule';
 import {
   ACTIVE_FIREBASE_PROJECT_ID,
   auth,
@@ -86,6 +90,7 @@ import {
   FootballPopularityRecord,
   FootballTicket,
   GameBranding,
+  GameCategory,
   GameConfig,
   LedgerEntry,
   RecentWinnerRecord,
@@ -96,7 +101,7 @@ import {
   WithdrawalRecord,
 } from './types';
 
-type NavTab = 'play' | 'football' | 'wallet' | 'history' | 'admin';
+type NavTab = 'dashboard' | 'football' | 'chicken' | 'play' | 'wallet' | 'history' | 'admin';
 type AuthMode = 'login' | 'register';
 
 const LAST_PHONE_STORAGE_KEY = 'edilbet_last_phone';
@@ -107,8 +112,10 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [activeTab, setActiveTab] = useState<NavTab>('football');
+  const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
   const [sportsSection, setSportsSection] = useState<SportsSection>('sport');
+  const [quickStake, setQuickStake] = useState<number>(50);
+  const [arenaInitialGame, setArenaInitialGame] = useState<Exclude<GameCategory, 'chicken'>>('dice');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
 
@@ -580,8 +587,8 @@ export default function App() {
       depositPhone: validDep,
       withdrawalPhone: validWdr,
       accountName: settings?.accountName || 'እድል ቤት · Edil Bet',
-      minDeposit: settings?.minDeposit ?? 100,
-      minWithdraw: settings?.minWithdraw ?? 500,
+      minDeposit: 50,
+      minWithdraw: 0,
       houseWinRate: settings?.houseWinRate ?? 0.28,
       updatedBy: settings?.updatedBy || 'system',
       updatedAt: settings?.updatedAt as TelebirrSettings['updatedAt'],
@@ -593,6 +600,11 @@ export default function App() {
       allWithdrawals.filter((w) => w.status === 'pending').length +
       allDeposits.filter((d) => d.status === 'pending').length,
     [allWithdrawals, allDeposits],
+  );
+
+  const liveMatchesCount = useMemo(
+    () => buildFootballSchedule().filter((m) => m.isLive).length,
+    [],
   );
 
   const displayAccountPhone = useMemo(() => {
@@ -895,7 +907,7 @@ export default function App() {
   const handleSignOut = async () => {
     await signOut(auth);
     setDrawerOpen(false);
-    setActiveTab('football');
+    setActiveTab('dashboard');
     setSportsSection('sport');
     setAuthMode('login');
     setPasswordInput('');
@@ -968,14 +980,14 @@ export default function App() {
       setSportsSection(last.section);
       return;
     }
-    if (activeTab !== 'football' || sportsSection !== 'sport') {
-      setActiveTab('football');
+    if (activeTab !== 'dashboard' || sportsSection !== 'sport') {
+      setActiveTab('dashboard');
       setSportsSection('sport');
     }
   }, [accountSettingsOpen, drawerOpen, viewHistory, activeTab, sportsSection]);
 
   const canGoBackNav =
-    viewHistory.length > 0 || activeTab !== 'football' || sportsSection !== 'sport';
+    viewHistory.length > 0 || activeTab !== 'dashboard' || sportsSection !== 'sport';
 
   const pushedAppHistoryRef = useRef(false);
   useEffect(() => {
@@ -1071,50 +1083,41 @@ export default function App() {
             <div className="max-w-7xl mx-auto px-2.5 sm:px-4 py-1.5 flex items-center gap-1.5 sm:gap-2 overflow-x-auto no-scrollbar text-xs font-extrabold">
               <button
                 type="button"
+                onClick={() => openTab('dashboard')}
+                className={`px-3 py-1.5 rounded transition cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1 ${
+                  activeTab === 'dashboard'
+                    ? 'bg-[#9AD84B] text-slate-950 font-black'
+                    : 'text-white hover:bg-black/15'
+                }`}
+              >
+                <LayoutGrid className="w-3.5 h-3.5" />
+                <span>{bi('ዳሽቦርድ', 'HUB')}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => openTab('chicken')}
+                className={`px-3 py-1.5 rounded transition cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1 ${
+                  activeTab === 'chicken'
+                    ? 'bg-[#9AD84B] text-slate-950 font-black'
+                    : 'text-white hover:bg-black/15'
+                }`}
+              >
+                <Footprints className="w-3.5 h-3.5" />
+                <span>{bi('ዶሮ ዝላይ', 'CHICKEN')}</span>
+              </button>
+
+              <button
+                type="button"
                 onClick={() => openSportsSection('sport')}
-                className={`px-3 py-1.5 rounded transition cursor-pointer whitespace-nowrap shrink-0 ${
-                  activeTab === 'football' && sportsSection === 'sport'
+                className={`px-3 py-1.5 rounded transition cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1 ${
+                  activeTab === 'football'
                     ? 'bg-[#9AD84B] text-slate-950 font-black'
                     : 'text-white hover:bg-black/15'
                 }`}
               >
-                {bi('ስፖርት', 'SPORT')}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => openSportsSection('upcoming')}
-                className={`px-3 py-1.5 rounded transition cursor-pointer whitespace-nowrap shrink-0 ${
-                  activeTab === 'football' && sportsSection === 'upcoming'
-                    ? 'bg-[#9AD84B] text-slate-950 font-black'
-                    : 'text-white hover:bg-black/15'
-                }`}
-              >
-                {bi('ቀጣይ 7 ቀን', 'UPCOMING')}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => openSportsSection('live')}
-                className={`px-3 py-1.5 rounded transition cursor-pointer whitespace-nowrap shrink-0 ${
-                  activeTab === 'football' && sportsSection === 'live'
-                    ? 'bg-[#9AD84B] text-slate-950 font-black'
-                    : 'text-white hover:bg-black/15'
-                }`}
-              >
-                {bi('ላይቭ', 'LIVE')}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => openSportsSection('cashout')}
-                className={`px-3 py-1.5 rounded transition cursor-pointer whitespace-nowrap shrink-0 ${
-                  activeTab === 'football' && sportsSection === 'cashout'
-                    ? 'bg-[#9AD84B] text-slate-950 font-black'
-                    : 'text-white hover:bg-black/15'
-                }`}
-              >
-                {bi('ካሽአውት', 'CASHOUT')}
+                <Trophy className="w-3.5 h-3.5" />
+                <span>{bi('እግር ኳስ', 'FOOTBALL')}</span>
               </button>
 
               <button
@@ -1126,7 +1129,7 @@ export default function App() {
                     : 'text-white hover:bg-black/15'
                 }`}
               >
-                {bi('ጨዋታዎች · ዳይስ', 'GAMES & DICE')}
+                {bi('ዳይስ & ሳንቲም', 'DICE & COIN')}
               </button>
 
               <button
@@ -1275,6 +1278,24 @@ export default function App() {
 
                   {/* Drawer Navigation Rows */}
                   <div className="divide-y divide-slate-200 text-sm font-semibold text-slate-800">
+                    <button
+                      type="button"
+                      onClick={() => openTab('dashboard')}
+                      className="w-full px-4 py-3 flex items-center gap-3 hover:bg-slate-50 cursor-pointer text-left font-bold text-[#0E8A38]"
+                    >
+                      <LayoutGrid className="w-4 h-4 text-[#0E8A38]" />
+                      <span>{bi('ዋና ዳሽቦርድ (ሁሉም ጨዋታዎች)', 'Games Dashboard Hub')}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => openTab('chicken')}
+                      className="w-full px-4 py-3 flex items-center gap-3 hover:bg-slate-50 cursor-pointer text-left"
+                    >
+                      <Footprints className="w-4 h-4 text-amber-600" />
+                      <span>{bi('ዶሮ ዝላይ ውርርድ (Chicken Jump)', 'Chicken Jump Betting')}</span>
+                    </button>
+
                     <button
                       type="button"
                       onClick={() => openTab('wallet')}
@@ -1698,33 +1719,64 @@ export default function App() {
             {bi('የፋየርስቶር ቦርሳዎን በማዘጋጀት ላይ...', 'Preparing your wallet...')}
           </div>
         ) : (
-          <div className="space-y-4">
+          <div className="space-y-2.5 sm:space-y-4">
             {canGoBackNav && (
-              <div className="pt-2.5 flex items-center justify-between gap-2">
+              <div className="pt-1.5 sm:pt-2.5 flex items-center justify-between gap-2">
                 <button
                   type="button"
                   onClick={handleBackNavigation}
-                  className="min-h-[42px] px-3.5 py-2 rounded-lg bg-white hover:bg-slate-100 border border-slate-200 text-slate-900 text-xs font-black flex items-center gap-1.5 cursor-pointer transition shadow-2xs"
+                  className="min-h-[38px] sm:min-h-[42px] px-3 py-1.5 rounded-lg bg-white hover:bg-slate-100 border border-slate-200 text-slate-900 text-xs font-black flex items-center gap-1.5 cursor-pointer transition shadow-2xs"
                 >
                   <ArrowLeft className="w-4 h-4 text-[#0E8A38]" />
                   <span>{bi('ተመለስ · Back', 'Back')}</span>
                 </button>
                 <span className="text-[11px] font-bold text-slate-500 truncate">
-                  {activeTab === 'play'
-                    ? bi('ዳይስ እና ጨዋታዎች', 'Dice & Games')
-                    : activeTab === 'wallet'
-                      ? bi('ቴሌብር ቦርሳ', 'Telebirr Wallet')
-                      : activeTab === 'history'
-                        ? bi('የውርርድ ታሪክ', 'Bet History')
-                        : activeTab === 'admin'
-                          ? bi('አድሚን ፓነል', 'Admin Panel')
-                          : sportsSection === 'upcoming'
-                            ? bi('ቀጣይ 7 ቀን ፕሮግራም', 'Upcoming 7-Day Program')
-                            : sportsSection === 'live'
-                              ? bi('ቀጥታ ጨዋታዎች', 'Live Matches')
-                              : bi('ላይቭ ካሽአውት', 'Live Cashout')}
+                  {activeTab === 'dashboard'
+                    ? bi('ዋና ዳሽቦርድ', 'Games Dashboard')
+                    : activeTab === 'chicken'
+                      ? bi('ዶሮ ዝላይ ውርርድ', 'Chicken Jump')
+                      : activeTab === 'play'
+                        ? bi('ዳይስ እና ጨዋታዎች', 'Dice & Games')
+                        : activeTab === 'wallet'
+                          ? bi('ቴሌብር ቦርሳ', 'Telebirr Wallet')
+                          : activeTab === 'history'
+                            ? bi('የውርርድ ታሪክ', 'Bet History')
+                            : activeTab === 'admin'
+                              ? bi('አድሚን ፓነል', 'Admin Panel')
+                              : sportsSection === 'live' || sportsSection === 'cashout'
+                                ? bi('እግር ኳስ · ላይቭ እና ካሽአውት', 'Football · Live & Cashout')
+                                : sportsSection === 'promos'
+                                  ? bi('እግር ኳስ · ማስታወቂያ እና ህጎች', 'Football · Promos & Rules')
+                                  : bi('እግር ኳስ · ውርርድ', 'Football · Betting')}
                 </span>
               </div>
+            )}
+
+            {activeTab === 'dashboard' && (
+              <GamesDashboard
+                wallet={wallet}
+                gameConfig={gameConfig}
+                liveMatchesCount={liveMatchesCount}
+                liveTicketsCount={footballTickets.filter((t) => t.status === 'live').length}
+                dailyBonusAvailable={dailyBonusLoaded && !dailyBonusClaimed}
+                dailyBonusAmount={DAILY_BONUS_AMOUNT}
+                claimingBonus={claimingBonus}
+                quickStake={quickStake}
+                onChangeQuickStake={setQuickStake}
+                onClaimDailyBonus={handleClaimDailyBonus}
+                onOpenChickenJump={(stake) => {
+                  setQuickStake(stake);
+                  openTab('chicken');
+                }}
+                onOpenFootball={(sec) => openSportsSection(sec ?? 'sport')}
+                onOpenArenaGame={(cat, stake) => {
+                  setArenaInitialGame(cat);
+                  setQuickStake(stake);
+                  openTab('play');
+                }}
+                onGoToWallet={() => openTab('wallet')}
+                onGoToHistory={() => openTab('history')}
+              />
             )}
 
             {activeTab === 'football' && (
@@ -1745,15 +1797,38 @@ export default function App() {
               />
             )}
 
-            {(activeTab === 'play' || activeTab === 'football') && (
+            {(activeTab === 'dashboard' || activeTab === 'football') && (
               <LiveWinnersTicker winners={recentWinners} />
             )}
 
+            {activeTab === 'chicken' && (
+              <div className="space-y-4">
+                <ChickenJumpGame
+                  uid={user.uid}
+                  wallet={wallet}
+                  settings={settings}
+                  gameConfig={gameConfig}
+                  soundEnabled={soundEnabled}
+                  initialStake={quickStake}
+                  onToggleSound={() => setSoundEnabled((prev) => !prev)}
+                  onGoToDeposit={() => openTab('wallet')}
+                  onNotify={notify}
+                  onWinCelebrate={triggerWinCelebrate}
+                />
+                <LiveWinnersTicker winners={recentWinners} />
+                <WeeklyLeaderboard entries={weeklyLeaderboard} currentUid={user.uid} />
+              </div>
+            )}
+
+            {activeTab === 'dashboard' && (
+              <WeeklyLeaderboard entries={weeklyLeaderboard} currentUid={user.uid} />
+            )}
+
             {activeTab === 'play' && (
-              <div className="space-y-4 pt-3">
+              <div className="space-y-4">
                 {/* Daily Login Bonus Card */}
                 {dailyBonusLoaded && !dailyBonusClaimed && (
-                  <div className="bg-white border border-[#0E8A38]/40 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+                  <div className="bg-white border border-[#0E8A38]/40 rounded-xl p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 rounded-lg bg-[#9AD84B]/30 text-[#0E8A38] flex items-center justify-center shrink-0">
                         <Gift className="w-5 h-5" />
@@ -1792,12 +1867,15 @@ export default function App() {
                   settings={settings}
                   gameConfig={gameConfig}
                   soundEnabled={soundEnabled}
+                  initialGame={arenaInitialGame}
+                  initialStake={quickStake}
                   onToggleSound={() => setSoundEnabled((prev) => !prev)}
                   onGoToDeposit={() => setActiveTab('wallet')}
                   onNotify={notify}
                   onWinCelebrate={triggerWinCelebrate}
                 />
 
+                <LiveWinnersTicker winners={recentWinners} />
                 <WeeklyLeaderboard entries={weeklyLeaderboard} currentUid={user.uid} />
               </div>
             )}
@@ -1820,7 +1898,12 @@ export default function App() {
 
             {activeTab === 'history' && (
               <div className="pt-3">
-                <HistoryPanel bets={myBets} tickets={footballTickets} />
+                <HistoryPanel
+                  bets={myBets}
+                  tickets={footballTickets}
+                  deposits={myDeposits}
+                  withdrawals={myWithdrawals}
+                />
               </div>
             )}
 
@@ -2199,25 +2282,25 @@ export default function App() {
             {(
               [
                 {
+                  id: 'dashboard',
+                  icon: LayoutGrid,
+                  label: bi('ዳሽቦርድ', 'Hub'),
+                  active: activeTab === 'dashboard',
+                  onClick: () => openTab('dashboard'),
+                },
+                {
+                  id: 'chicken',
+                  icon: Footprints,
+                  label: bi('ዶሮ ዝላይ', 'Chicken'),
+                  active: activeTab === 'chicken',
+                  onClick: () => openTab('chicken'),
+                },
+                {
                   id: 'sport',
                   icon: Trophy,
-                  label: bi('ስፖርት', 'Sport'),
-                  active: activeTab === 'football' && sportsSection === 'sport',
+                  label: bi('እግር ኳስ', 'Football'),
+                  active: activeTab === 'football',
                   onClick: () => openSportsSection('sport'),
-                },
-                {
-                  id: 'upcoming',
-                  icon: CalendarClock,
-                  label: bi('7-ቀን', '7-Day'),
-                  active: activeTab === 'football' && sportsSection === 'upcoming',
-                  onClick: () => openSportsSection('upcoming'),
-                },
-                {
-                  id: 'play',
-                  icon: Dice5,
-                  label: bi('ዳይስ', 'Games'),
-                  active: activeTab === 'play',
-                  onClick: () => openTab('play'),
                 },
                 {
                   id: 'wallet',

@@ -72,8 +72,8 @@ service cloud.firestore {
         && isValidPhone(data.depositPhone)
         && isValidPhone(data.withdrawalPhone)
         && data.accountName is string && data.accountName.size() >= 2 && data.accountName.size() <= 80
-        && data.minDeposit is number && data.minDeposit == 100
-        && data.minWithdraw is number && data.minWithdraw == 500
+        && data.minDeposit is number && data.minDeposit == 50
+        && data.minWithdraw is number && data.minWithdraw == 0
         && data.houseWinRate is number && data.houseWinRate >= 0.1 && data.houseWinRate <= 0.45
         && data.updatedBy is string && data.updatedBy == request.auth.uid && data.updatedBy.size() <= 128
         && data.updatedAt == request.time;
@@ -214,7 +214,7 @@ service cloud.firestore {
         && isValidTxId(data.txId) && data.txId == txId
         && data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128
         && (data.uid == request.auth.uid || isAdmin())
-        && data.amount is number && data.amount >= 100 && data.amount <= 500000
+        && data.amount is number && data.amount >= 50 && data.amount <= 500000
         && data.createdAt == request.time;
     }
 
@@ -222,7 +222,7 @@ service cloud.firestore {
       return data.keys().hasAll(['transaction_id', 'amount', 'message', 'status', 'created_at'])
         && data.keys().hasOnly(['transaction_id', 'amount', 'message', 'status', 'source', 'created_at', 'used_by', 'used_at'])
         && isValidTxId(data.transaction_id) && data.transaction_id == txId
-        && data.amount is number && data.amount >= 100 && data.amount <= 500000
+        && data.amount is number && data.amount >= 50 && data.amount <= 500000
         && data.message is string && data.message.size() >= 2 && data.message.size() <= 600
         && data.status in ['unused', 'used']
         && (!('source' in data) || (data.source is string && data.source.size() <= 40))
@@ -240,7 +240,7 @@ service cloud.firestore {
         && data.playerName is string && data.playerName.size() >= 1 && data.playerName.size() <= 80
         && isValidPhone(data.playerPhone)
         && isValidPhone(data.systemPhone)
-        && data.amount is number && data.amount >= 100 && data.amount <= 500000
+        && data.amount is number && data.amount >= 50 && data.amount <= 500000
         && data.status in ['pending', 'verified', 'rejected']
         && data.verifiedMessage is string && data.verifiedMessage.size() >= 2 && data.verifiedMessage.size() <= 120
         && (!('processedBy' in data) || isValidId(data.processedBy))
@@ -256,7 +256,7 @@ service cloud.firestore {
         && data.playerName is string && data.playerName.size() >= 1 && data.playerName.size() <= 80
         && isValidPhone(data.playerPhone)
         && isValidPhone(data.sourceSystemPhone)
-        && data.amount is number && data.amount >= 500 && data.amount <= 500000
+        && data.amount is number && data.amount > 0 && data.amount <= 500000
         && data.status in ['pending', 'paid', 'completed', 'rejected']
         && data.systemVerified is bool
         && data.systemVerifiedText is string && data.systemVerifiedText.size() >= 2 && data.systemVerifiedText.size() <= 120
@@ -271,7 +271,7 @@ service cloud.firestore {
         && isValidId(data.id) && data.id == betId
         && data.uid is string && data.uid == request.auth.uid && data.uid.size() <= 128
         && (!('ownerPhone' in data) || isValidPhone(data.ownerPhone))
-        && data.gameType in ['dice_single', 'dice_double', 'dice_d100', 'coin', 'lucky', 'football']
+        && data.gameType in ['dice_single', 'dice_double', 'dice_d100', 'coin', 'lucky', 'football', 'chicken']
         && data.gameName is string && data.gameName.size() >= 1 && data.gameName.size() <= 80
         && data.betAmount is number && data.betAmount >= 1 && data.betAmount <= 10000000
         && data.multiplier is number && data.multiplier >= 1 && data.multiplier <= 1000000
@@ -292,7 +292,7 @@ service cloud.firestore {
         && isValidPhone(data.playerPhone)
         && data.type in ['income', 'expense']
         && data.category in ['deposit', 'withdrawal']
-        && data.amount is number && data.amount >= 1 && data.amount <= 500000
+        && data.amount is number && data.amount > 0 && data.amount <= 500000
         && data.referenceId is string && data.referenceId.size() >= 1 && data.referenceId.size() <= 128
         && data.description is string && data.description.size() >= 1 && data.description.size() <= 180
         && data.createdAt == request.time;
@@ -304,7 +304,7 @@ service cloud.firestore {
         && isValidId(data.id) && data.id == winnerId
         && data.uid is string && data.uid == request.auth.uid && data.uid.size() <= 128
         && data.playerMask is string && data.playerMask.size() >= 2 && data.playerMask.size() <= 32
-        && data.gameType in ['dice_single', 'dice_double', 'dice_d100', 'coin', 'lucky', 'football']
+        && data.gameType in ['dice_single', 'dice_double', 'dice_d100', 'coin', 'lucky', 'football', 'chicken']
         && data.gameName is string && data.gameName.size() >= 1 && data.gameName.size() <= 80
         && data.multiplier is number && data.multiplier >= 1 && data.multiplier <= 1000000
         && data.payout is number && data.payout > 0 && data.payout <= 1000000000
@@ -620,7 +620,7 @@ service cloud.firestore {
             && existsAfter(/databases/$(database)/documents/deposits/$(incoming().lastActionRef))
             && getAfter(/databases/$(database)/documents/deposits/$(incoming().lastActionRef)).data.uid == userId
             && getAfter(/databases/$(database)/documents/deposits/$(incoming().lastActionRef)).data.status == 'verified'
-            && getAfter(/databases/$(database)/documents/deposits/$(incoming().lastActionRef)).data.amount >= 100
+            && getAfter(/databases/$(database)/documents/deposits/$(incoming().lastActionRef)).data.amount >= 50
             && incoming().balance >= existing().balance + getAfter(/databases/$(database)/documents/deposits/$(incoming().lastActionRef)).data.amount - 0.01
             && incoming().balance <= existing().balance + getAfter(/databases/$(database)/documents/deposits/$(incoming().lastActionRef)).data.amount + 0.01
             && incoming().totalDeposited >= existing().totalDeposited + getAfter(/databases/$(database)/documents/deposits/$(incoming().lastActionRef)).data.amount - 0.01
@@ -653,7 +653,7 @@ service cloud.firestore {
             && existsAfter(/databases/$(database)/documents/withdrawals/$(incoming().lastActionRef))
             && getAfter(/databases/$(database)/documents/withdrawals/$(incoming().lastActionRef)).data.uid == userId
             && getAfter(/databases/$(database)/documents/withdrawals/$(incoming().lastActionRef)).data.status == 'pending'
-            && getAfter(/databases/$(database)/documents/withdrawals/$(incoming().lastActionRef)).data.amount >= 500
+            && getAfter(/databases/$(database)/documents/withdrawals/$(incoming().lastActionRef)).data.amount > 0
             && getAfter(/databases/$(database)/documents/withdrawals/$(incoming().lastActionRef)).data.amount <= existing().balance
             && incoming().balance >= existing().balance - getAfter(/databases/$(database)/documents/withdrawals/$(incoming().lastActionRef)).data.amount - 0.01
             && incoming().balance <= existing().balance - getAfter(/databases/$(database)/documents/withdrawals/$(incoming().lastActionRef)).data.amount + 0.01

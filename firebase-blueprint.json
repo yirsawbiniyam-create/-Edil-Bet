@@ -27,11 +27,11 @@
         },
         "minDeposit": {
           "type": "number",
-          "description": "Minimum deposit amount in ETB (100)."
+          "description": "Minimum deposit amount in ETB (50)."
         },
         "minWithdraw": {
           "type": "number",
-          "description": "Minimum withdrawal amount in ETB (500)."
+          "description": "Minimum withdrawal amount in ETB (0 = unlimited / no minimum)."
         },
         "houseWinRate": {
           "type": "number",
@@ -469,7 +469,7 @@
         },
         "gameType": {
           "type": "string",
-          "enum": ["dice_single", "dice_double", "dice_d100", "coin", "lucky", "football"]
+          "enum": ["dice_single", "dice_double", "dice_d100", "coin", "lucky", "football", "chicken"]
         },
         "gameName": {
           "type": "string",
@@ -658,7 +658,7 @@
         },
         "gameType": {
           "type": "string",
-          "enum": ["dice_single", "dice_double", "dice_d100", "coin", "lucky", "football"]
+          "enum": ["dice_single", "dice_double", "dice_d100", "coin", "lucky", "football", "chicken"]
         },
         "gameName": {
           "type": "string",

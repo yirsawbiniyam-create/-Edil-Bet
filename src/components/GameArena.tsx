@@ -1,6 +1,8 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Coins,
   Crown,
   Dices,
@@ -47,6 +49,8 @@ interface GameArenaProps {
   settings: TelebirrSettings | null;
   gameConfig: GameConfig | null;
   soundEnabled: boolean;
+  initialGame?: Exclude<GameCategory, 'chicken'>;
+  initialStake?: number;
   onToggleSound: () => void;
   onGoToDeposit: () => void;
   onNotify: (msg: string, type: 'success' | 'error' | 'info') => void;
@@ -59,13 +63,17 @@ export const GameArena: React.FC<GameArenaProps> = ({
   settings,
   gameConfig,
   soundEnabled,
+  initialGame,
+  initialStake,
   onToggleSound,
   onGoToDeposit,
   onNotify,
   onWinCelebrate,
 }) => {
   const arenaRef = useRef<HTMLDivElement | null>(null);
-  const [activeGame, setActiveGame] = useState<GameCategory>('dice');
+  const [activeGame, setActiveGame] = useState<Exclude<GameCategory, 'chicken'>>(
+    initialGame ?? 'dice',
+  );
   const [diceSubMode, setDiceSubMode] = useState<DiceSubMode>('single');
 
   // Single Dice state
@@ -92,8 +100,23 @@ export const GameArena: React.FC<GameArenaProps> = ({
   const [luckyDisplay, setLuckyDisplay] = useState<string>('?');
 
   // Bet input & round state
-  const [betInput, setBetInput] = useState<string>('50');
+  const [betInput, setBetInput] = useState<string>(() =>
+    initialStake && initialStake >= 1 ? String(initialStake) : '50',
+  );
   const [isRolling, setIsRolling] = useState<boolean>(false);
+  const [showTips, setShowTips] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (initialGame && !isRolling) {
+      setActiveGame(initialGame);
+    }
+  }, [initialGame, isRolling]);
+
+  useEffect(() => {
+    if (initialStake && initialStake >= 1 && !isRolling) {
+      setBetInput(String(initialStake));
+    }
+  }, [initialStake, isRolling]);
   const [statusLabel, setStatusLabel] = useState<string>('ምርጫዎን ይምረጡና ጨዋታውን ይጀምሩ');
   const [lastOutcome, setLastOutcome] = useState<{
     won: boolean;
@@ -128,7 +151,7 @@ export const GameArena: React.FC<GameArenaProps> = ({
   const potentialWin = Number((numericBet * currentMultiplier).toFixed(2));
   const d100Stats = getD100Stats(d100Direction, d100Target);
 
-  const handleSwitchGame = (game: GameCategory) => {
+  const handleSwitchGame = (game: Exclude<GameCategory, 'chicken'>) => {
     if (isRolling) return;
     playGameSound('click', soundEnabled);
     setActiveGame(game);
@@ -139,7 +162,7 @@ export const GameArena: React.FC<GameArenaProps> = ({
   const handleApplyStrategy = (strategy: StrategyPreset) => {
     if (isRolling) return;
     playGameSound('click', soundEnabled);
-    setActiveGame(strategy.game);
+    setActiveGame(strategy.game === 'chicken' ? 'dice' : strategy.game);
     if (strategy.diceSubMode) setDiceSubMode(strategy.diceSubMode);
     if (strategy.singleMode) setSingleMode(strategy.singleMode);
     if (strategy.doubleMode) setDoubleMode(strategy.doubleMode);
@@ -357,102 +380,111 @@ export const GameArena: React.FC<GameArenaProps> = ({
     }
   };
 
+  const adjustBetByFactor = (factor: number) => {
+    if (isRolling) return;
+    playGameSound('click', soundEnabled);
+    const next = Math.max(minBet, Math.floor((numericBet || minBet) * factor));
+    const capped = wallet.balance >= minBet ? Math.min(next, Math.floor(wallet.balance)) : next;
+    setBetInput(String(Math.max(minBet, capped)));
+  };
+
   return (
-    <div ref={arenaRef} className="space-y-6">
-      {/* Balance Callout Banner if zero */}
-      {wallet.balance < 1 && (
-        <div className="bg-slate-900 border border-amber-500/40 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="space-y-1">
-            <h3 className="text-base font-bold text-amber-400">ለመጫወት መጀመሪያ በቴሌብር ዲፖሲት ያድርጉ</h3>
-            <p className="text-sm text-slate-300">
-              ቀሪ ሂሳብዎ 0.00 ብር ነው። ዝቅተኛው 100 ብር በቴሌብር አስገብተው ወዲያውኑ መጫወት ይችላሉ።
+    <div ref={arenaRef} className="space-y-3 sm:space-y-5">
+      {/* Compact Low Balance Alert */}
+      {wallet.balance < minBet && (
+        <div className="bg-slate-900 border border-amber-500/40 rounded-2xl p-3 sm:p-4 flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="text-xs sm:text-sm font-bold text-amber-400 truncate">
+              ለመጫወት በቴሌብር ዲፖሲት ያድርጉ
+            </h3>
+            <p className="text-[11px] sm:text-xs text-slate-300 truncate">
+              ቀሪ ሂሳብ: {formatETB(wallet.balance)} · ዝቅተኛው 50 ብር
             </p>
           </div>
           <button
             type="button"
             onClick={onGoToDeposit}
-            className="shrink-0 px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-sm flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap"
+            className="shrink-0 min-h-[40px] px-3.5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer whitespace-nowrap"
           >
-            <Wallet className="w-4 h-4" />
-            <span>አሁን ዲፖሲት አድርግ</span>
+            <Wallet className="w-3.5 h-3.5" />
+            <span>ዲፖሲት</span>
           </button>
         </div>
       )}
 
       {/* Game Selector Tabs */}
-      <div className="grid grid-cols-3 gap-2 bg-slate-900/90 p-1.5 rounded-2xl border border-slate-800">
+      <div className="grid grid-cols-3 gap-1.5 bg-slate-900/95 p-1 rounded-2xl border border-slate-800">
         <button
           type="button"
           onClick={() => handleSwitchGame('dice')}
-          className={`py-3 px-3 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap ${
+          className={`min-h-[42px] py-2 px-2 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition cursor-pointer whitespace-nowrap ${
             activeGame === 'dice'
               ? 'bg-amber-500 text-slate-950 shadow'
               : 'text-slate-300 hover:bg-slate-800'
           }`}
         >
           <Dices className="w-4 h-4 shrink-0" />
-          <span>የዳይስ ጨዋታ</span>
+          <span>ዳይስ</span>
         </button>
 
         <button
           type="button"
           onClick={() => handleSwitchGame('coin')}
-          className={`py-3 px-3 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap ${
+          className={`min-h-[42px] py-2 px-2 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition cursor-pointer whitespace-nowrap ${
             activeGame === 'coin'
               ? 'bg-amber-500 text-slate-950 shadow'
               : 'text-slate-300 hover:bg-slate-800'
           }`}
         >
           <Coins className="w-4 h-4 shrink-0" />
-          <span>የሳንቲም ውርርድ</span>
+          <span>ሳንቲም</span>
         </button>
 
         <button
           type="button"
           onClick={() => handleSwitchGame('lucky')}
-          className={`py-3 px-3 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition cursor-pointer whitespace-nowrap ${
+          className={`min-h-[42px] py-2 px-2 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition cursor-pointer whitespace-nowrap ${
             activeGame === 'lucky'
               ? 'bg-amber-500 text-slate-950 shadow'
               : 'text-slate-300 hover:bg-slate-800'
           }`}
         >
           <Sparkles className="w-4 h-4 shrink-0" />
-          <span>የእድል ቁጥር (1-20)</span>
+          <span>እድል 1-20</span>
         </button>
       </div>
 
-      {/* Main Arena Surface */}
-      <section className="bg-slate-900/95 border border-slate-800 rounded-3xl p-5 sm:p-8 space-y-6">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4">
-          <div>
-            <h2 className="text-xl sm:text-2xl font-extrabold text-white">
+      {/* Main Mobile-Fit Arena Surface */}
+      <section className="bg-slate-900/95 border border-slate-800 rounded-2xl sm:rounded-3xl p-3 sm:p-6 space-y-3 sm:space-y-5">
+        <div className="flex items-center justify-between gap-2 border-b border-slate-800 pb-2.5 sm:pb-3">
+          <div className="min-w-0">
+            <h2 className="text-sm sm:text-xl font-extrabold text-white truncate">
               {activeGame === 'dice' && 'የዳይስ ጨዋታ (1 - 100)'}
-              {activeGame === 'coin' && 'የሳንቲም ውርርድ (ዘውድ ወይም ጎራዴ)'}
-              {activeGame === 'lucky' && 'የእድል ቁጥር (ከ 1 እስከ 20)'}
+              {activeGame === 'coin' && 'የሳንቲም ውርርድ (ዘውድ / ጎራዴ)'}
+              {activeGame === 'lucky' && 'የእድል ቁጥር (1 - 20)'}
             </h2>
-            <p className="text-xs sm:text-sm text-slate-400 mt-0.5">
-              {activeGame === 'dice' && 'ቀላል ምርጫ ይምረጡ እና ዳይሱን ይወርውሩ'}
-              {activeGame === 'coin' &&
-                `ዘውድ ወይም ጎራዴ ይምረጡ — ትክክል ከሆኑ ${activeConfig.coinOdds}x ያሸንፋሉ`}
-              {activeGame === 'lucky' &&
-                `ከ 1 እስከ 20 አንድ ቁጥር ይምረጡ — ካሸነፉ ${activeConfig.luckyOdds}x ያገኛሉ`}
+            <p className="text-[11px] text-slate-400 font-mono-num truncate">
+              ቀሪ: <strong className="text-emerald-400">{formatETB(wallet.balance)}</strong>
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
-            <span className="font-mono-num text-sm font-bold text-emerald-400">
-              ሽልማት · {currentMultiplier}x
-            </span>
+          <div className="flex items-center gap-2 shrink-0">
+            <div className="bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1 text-right">
+              <span className="text-[10px] text-slate-400 block leading-tight">ሽልማት</span>
+              <span className="font-mono-num text-sm font-black text-emerald-400 leading-tight">
+                {currentMultiplier}x
+              </span>
+            </div>
             <button
               type="button"
               onClick={onToggleSound}
               title={soundEnabled ? 'ድምጽ አጥፋ' : 'ድምጽ አብራ'}
-              className="w-10 h-10 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 flex items-center justify-center text-slate-200 transition cursor-pointer"
+              className="w-10 h-10 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 flex items-center justify-center text-slate-200 transition cursor-pointer shrink-0"
             >
               {soundEnabled ? (
-                <Volume2 className="w-5 h-5 text-amber-400" />
+                <Volume2 className="w-4 h-4 text-amber-400" />
               ) : (
-                <VolumeX className="w-5 h-5 text-slate-500" />
+                <VolumeX className="w-4 h-4 text-slate-500" />
               )}
             </button>
           </div>
@@ -460,13 +492,13 @@ export const GameArena: React.FC<GameArenaProps> = ({
 
         {/* DICE PANEL */}
         {activeGame === 'dice' && (
-          <div className="space-y-6">
-            <div className="grid grid-cols-3 gap-2 bg-slate-950 p-1.5 rounded-2xl border border-slate-800">
+          <div className="space-y-3 sm:space-y-5">
+            <div className="grid grid-cols-3 gap-1.5 bg-slate-950 p-1 rounded-xl border border-slate-800">
               {(
                 [
-                  ['single', 'ባለ 1 ዳይስ (1-6)'],
-                  ['double', 'ባለ 2 ዳይስ (2-12)'],
-                  ['d100', 'ባለ 100 ዳይስ (1-100)'],
+                  ['single', 'ባለ 1 (1-6)'],
+                  ['double', 'ባለ 2 (2-12)'],
+                  ['d100', 'D100 (1-100)'],
                 ] as const
               ).map(([mode, label]) => (
                 <button
@@ -478,7 +510,7 @@ export const GameArena: React.FC<GameArenaProps> = ({
                     setDiceSubMode(mode);
                     setLastOutcome(null);
                   }}
-                  className={`py-2.5 px-2 rounded-xl text-xs sm:text-sm font-bold transition cursor-pointer ${
+                  className={`min-h-[38px] py-1.5 px-1.5 rounded-lg text-[11px] sm:text-sm font-bold transition cursor-pointer ${
                     diceSubMode === mode
                       ? 'bg-amber-500 text-slate-950 shadow'
                       : 'text-slate-300 hover:bg-slate-800'
@@ -489,38 +521,38 @@ export const GameArena: React.FC<GameArenaProps> = ({
               ))}
             </div>
 
-            {/* Visual Stage */}
-            <div className="bg-slate-950/90 border border-slate-800 rounded-2xl py-7 px-4 flex flex-col items-center justify-center min-h-[200px] perspective-container">
+            {/* Compact Responsive Visual Stage */}
+            <div className="bg-slate-950/90 border border-slate-800 rounded-2xl py-4 sm:py-6 px-3 flex flex-col items-center justify-center min-h-[132px] sm:min-h-[180px] perspective-container">
               {diceSubMode === 'single' && <DiceVisual value={singleFace} rolling={isRolling} size="lg" />}
 
               {diceSubMode === 'double' && (
                 <div className="flex flex-col items-center">
-                  <div className="flex items-center gap-5">
+                  <div className="flex items-center gap-4 sm:gap-5">
                     <DiceVisual value={doubleFaces[0]} rolling={isRolling} size="md" />
                     <DiceVisual value={doubleFaces[1]} rolling={isRolling} size="md" />
                   </div>
-                  <p className="mt-3 font-mono-num text-sm font-bold text-amber-400">
+                  <p className="mt-2 font-mono-num text-xs sm:text-sm font-bold text-amber-400">
                     ድምር: {doubleFaces[0] + doubleFaces[1]} ({doubleFaces[0]} + {doubleFaces[1]})
                   </p>
                 </div>
               )}
 
               {diceSubMode === 'd100' && (
-                <div className="w-36 h-32 rounded-3xl bg-slate-900 border-2 border-amber-500/60 flex flex-col items-center justify-center">
-                  <span className="text-xs font-semibold text-slate-400">D100 ቁጥር</span>
-                  <span className="font-mono-num text-5xl font-black text-amber-400 mt-0.5">
+                <div className="w-28 h-24 sm:w-36 sm:h-30 rounded-2xl sm:rounded-3xl bg-slate-900 border-2 border-amber-500/60 flex flex-col items-center justify-center">
+                  <span className="text-[10px] sm:text-xs font-semibold text-slate-400">D100 ቁጥር</span>
+                  <span className="font-mono-num text-4xl sm:text-5xl font-black text-amber-400">
                     {d100Display}
                   </span>
                 </div>
               )}
 
-              <p className="mt-4 text-sm font-semibold text-slate-300 text-center">{statusLabel}</p>
+              <p className="mt-2.5 text-xs sm:text-sm font-semibold text-slate-300 text-center">{statusLabel}</p>
             </div>
 
             {/* Single Dice Controls */}
             {diceSubMode === 'single' && (
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2.5 sm:space-y-4">
+                <div className="grid grid-cols-2 gap-2 sm:gap-3">
                   <button
                     type="button"
                     onClick={() => {
@@ -528,14 +560,14 @@ export const GameArena: React.FC<GameArenaProps> = ({
                       playGameSound('click', soundEnabled);
                       setSingleMode('low');
                     }}
-                    className={`p-3.5 rounded-2xl border-2 flex flex-col items-center transition cursor-pointer ${
+                    className={`min-h-[48px] p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl border-2 flex flex-col items-center justify-center transition cursor-pointer active:scale-[0.98] ${
                       singleMode === 'low'
                         ? 'border-amber-500 bg-amber-500/15 text-amber-300'
                         : 'border-slate-800 bg-slate-950/60 hover:border-slate-700 text-slate-300'
                     }`}
                   >
-                    <span className="text-base font-extrabold">ዝቅተኛ (1 - 3)</span>
-                    <span className="text-xs text-slate-400 mt-0.5">
+                    <span className="text-sm sm:text-base font-extrabold">ዝቅተኛ (1 - 3)</span>
+                    <span className="text-[11px] sm:text-xs text-slate-400 mt-0.5">
                       ሽልማት: {activeConfig.singleDiceRangeOdds}x
                     </span>
                   </button>
@@ -547,24 +579,24 @@ export const GameArena: React.FC<GameArenaProps> = ({
                       playGameSound('click', soundEnabled);
                       setSingleMode('high');
                     }}
-                    className={`p-3.5 rounded-2xl border-2 flex flex-col items-center transition cursor-pointer ${
+                    className={`min-h-[48px] p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl border-2 flex flex-col items-center justify-center transition cursor-pointer active:scale-[0.98] ${
                       singleMode === 'high'
                         ? 'border-amber-500 bg-amber-500/15 text-amber-300'
                         : 'border-slate-800 bg-slate-950/60 hover:border-slate-700 text-slate-300'
                     }`}
                   >
-                    <span className="text-base font-extrabold">ከፍተኛ (4 - 6)</span>
-                    <span className="text-xs text-slate-400 mt-0.5">
+                    <span className="text-sm sm:text-base font-extrabold">ከፍተኛ (4 - 6)</span>
+                    <span className="text-[11px] sm:text-xs text-slate-400 mt-0.5">
                       ሽልማት: {activeConfig.singleDiceRangeOdds}x
                     </span>
                   </button>
                 </div>
 
                 <div>
-                  <p className="text-xs font-semibold text-slate-400 mb-2">
+                  <p className="text-[11px] sm:text-xs font-semibold text-slate-400 mb-1.5 sm:mb-2">
                     ወይም ትክክለኛ ቁጥር ይምረጡ ({activeConfig.singleDiceExactOdds}x)
                   </p>
-                  <div className="grid grid-cols-6 gap-2">
+                  <div className="grid grid-cols-6 gap-1.5 sm:gap-2">
                     {[1, 2, 3, 4, 5, 6].map((num) => (
                       <button
                         key={num}
@@ -575,7 +607,7 @@ export const GameArena: React.FC<GameArenaProps> = ({
                           setSingleMode('exact');
                           setSingleExact(num);
                         }}
-                        className={`py-3 rounded-xl border-2 font-mono-num font-black text-lg transition cursor-pointer ${
+                        className={`min-h-[44px] py-2 sm:py-3 rounded-xl border-2 font-mono-num font-black text-base sm:text-lg transition cursor-pointer active:scale-[0.96] ${
                           singleMode === 'exact' && singleExact === num
                             ? 'border-amber-500 bg-amber-500/20 text-amber-400'
                             : 'border-slate-800 bg-slate-950/60 hover:border-slate-700 text-slate-200'
@@ -591,8 +623,8 @@ export const GameArena: React.FC<GameArenaProps> = ({
 
             {/* Double Dice Controls */}
             {diceSubMode === 'double' && (
-              <div className="space-y-4">
-                <div className="grid grid-cols-3 gap-2.5">
+              <div className="space-y-2.5 sm:space-y-4">
+                <div className="grid grid-cols-3 gap-1.5 sm:gap-2.5">
                   {(
                     [
                       ['low', 'ዝቅተኛ (2-6)', `${activeConfig.doubleDiceRangeOdds}x`],
@@ -608,21 +640,21 @@ export const GameArena: React.FC<GameArenaProps> = ({
                         playGameSound('click', soundEnabled);
                         setDoubleMode(mode);
                       }}
-                      className={`p-3 rounded-2xl border-2 flex flex-col items-center transition cursor-pointer ${
+                      className={`min-h-[48px] p-2 sm:p-3 rounded-xl sm:rounded-2xl border-2 flex flex-col items-center justify-center transition cursor-pointer active:scale-[0.98] ${
                         doubleMode === mode
                           ? 'border-amber-500 bg-amber-500/15 text-amber-300'
                           : 'border-slate-800 bg-slate-950/60 hover:border-slate-700 text-slate-300'
                       }`}
                     >
-                      <span className="text-sm sm:text-base font-extrabold">{title}</span>
-                      <span className="text-xs text-slate-400">{mult}</span>
+                      <span className="text-xs sm:text-base font-extrabold leading-tight text-center">{title}</span>
+                      <span className="text-[11px] sm:text-xs text-slate-400 mt-0.5">{mult}</span>
                     </button>
                   ))}
                 </div>
 
                 <div>
-                  <p className="text-xs font-semibold text-slate-400 mb-2">ወይም ትክክለኛ ድምር ይምረጡ (2 - 12)</p>
-                  <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
+                  <p className="text-[11px] sm:text-xs font-semibold text-slate-400 mb-1.5 sm:mb-2">ወይም ትክክለኛ ድምር ይምረጡ (2 - 12)</p>
+                  <div className="grid grid-cols-4 sm:grid-cols-6 gap-1.5 sm:gap-2">
                     {Object.entries(DOUBLE_SUM_MULTIPLIERS).map(([sumStr, mult]) => {
                       const sumVal = Number(sumStr);
                       const active = doubleMode === 'exact' && doubleExact === sumVal;
@@ -636,14 +668,14 @@ export const GameArena: React.FC<GameArenaProps> = ({
                             setDoubleMode('exact');
                             setDoubleExact(sumVal);
                           }}
-                          className={`p-2.5 rounded-xl border-2 flex flex-col items-center transition cursor-pointer ${
+                          className={`min-h-[44px] p-1.5 sm:p-2.5 rounded-xl border-2 flex flex-col items-center justify-center transition cursor-pointer active:scale-[0.96] ${
                             active
                               ? 'border-amber-500 bg-amber-500/20 text-amber-400'
                               : 'border-slate-800 bg-slate-950/60 hover:border-slate-700 text-slate-200'
                           }`}
                         >
-                          <span className="font-mono-num text-base font-black">{sumVal}</span>
-                          <span className="text-[11px] font-bold text-emerald-400">{mult}x</span>
+                          <span className="font-mono-num text-sm sm:text-base font-black">{sumVal}</span>
+                          <span className="text-[10px] sm:text-[11px] font-bold text-emerald-400">{mult}x</span>
                         </button>
                       );
                     })}
@@ -654,8 +686,8 @@ export const GameArena: React.FC<GameArenaProps> = ({
 
             {/* D100 Controls */}
             {diceSubMode === 'd100' && (
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+              <div className="space-y-2.5 sm:space-y-4">
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 sm:gap-2">
                   {[
                     { dir: 'under' as const, target: 26, label: '1 - 25', mult: '3.8x' },
                     { dir: 'under' as const, target: 51, label: '1 - 50', mult: '1.9x' },
@@ -675,20 +707,20 @@ export const GameArena: React.FC<GameArenaProps> = ({
                           setD100Direction(preset.dir);
                           setD100Target(preset.target);
                         }}
-                        className={`p-2.5 rounded-xl border-2 flex flex-col items-center transition cursor-pointer ${
+                        className={`min-h-[44px] p-2 sm:p-2.5 rounded-xl border-2 flex flex-col items-center justify-center transition cursor-pointer active:scale-[0.97] ${
                           active
                             ? 'border-amber-500 bg-amber-500/15 text-amber-400'
                             : 'border-slate-800 bg-slate-950/60 hover:border-slate-700 text-slate-200'
                         }`}
                       >
                         <span className="font-mono-num text-xs font-black">{preset.label}</span>
-                        <span className="text-xs font-bold text-emerald-400">{preset.mult}</span>
+                        <span className="text-[11px] font-bold text-emerald-400">{preset.mult}</span>
                       </button>
                     );
                   })}
                 </div>
 
-                <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-4 space-y-3">
+                <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-3 sm:p-4 space-y-2.5 sm:space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <button
@@ -747,26 +779,26 @@ export const GameArena: React.FC<GameArenaProps> = ({
 
         {/* COIN PANEL */}
         {activeGame === 'coin' && (
-          <div className="space-y-6">
-            <div className="bg-slate-950/90 border border-slate-800 rounded-2xl py-8 px-4 flex flex-col items-center justify-center min-h-[200px] perspective-container">
+          <div className="space-y-3 sm:space-y-5">
+            <div className="bg-slate-950/90 border border-slate-800 rounded-2xl py-4 sm:py-7 px-4 flex flex-col items-center justify-center min-h-[136px] sm:min-h-[185px] perspective-container">
               <div
-                className={`w-28 h-28 rounded-full bg-gradient-to-br from-amber-300 via-amber-500 to-amber-700 border-4 border-amber-200 flex flex-col items-center justify-center text-slate-950 shadow-xl ${
+                className={`w-20 h-20 sm:w-28 sm:h-28 rounded-full bg-gradient-to-br from-amber-300 via-amber-500 to-amber-700 border-4 border-amber-200 flex flex-col items-center justify-center text-slate-950 shadow-xl ${
                   isRolling ? 'animate-coin-flip' : ''
                 }`}
               >
                 {coinFace === 'heads' ? (
-                  <Crown className="w-9 h-9" />
+                  <Crown className="w-7 h-7 sm:w-9 sm:h-9" />
                 ) : (
-                  <Swords className="w-9 h-9" />
+                  <Swords className="w-7 h-7 sm:w-9 sm:h-9" />
                 )}
-                <span className="text-sm font-black mt-1">
+                <span className="text-xs sm:text-sm font-black mt-0.5">
                   {coinFace === 'heads' ? 'ዘውድ' : 'ጎራዴ'}
                 </span>
               </div>
-              <p className="mt-4 text-sm font-semibold text-slate-300">{statusLabel}</p>
+              <p className="mt-2.5 text-xs sm:text-sm font-semibold text-slate-300">{statusLabel}</p>
             </div>
 
-            <div className="grid grid-cols-2 gap-3.5">
+            <div className="grid grid-cols-2 gap-2.5 sm:gap-3.5">
               <button
                 type="button"
                 onClick={() => {
@@ -774,14 +806,14 @@ export const GameArena: React.FC<GameArenaProps> = ({
                   playGameSound('click', soundEnabled);
                   setCoinChoice('heads');
                 }}
-                className={`p-4 rounded-2xl border-2 flex items-center justify-center gap-3 transition cursor-pointer ${
+                className={`min-h-[48px] p-3 sm:p-4 rounded-2xl border-2 flex items-center justify-center gap-2 transition cursor-pointer active:scale-[0.98] ${
                   coinChoice === 'heads'
                     ? 'border-amber-500 bg-amber-500/15 text-amber-400'
                     : 'border-slate-800 bg-slate-950/60 hover:border-slate-700 text-slate-300'
                 }`}
               >
-                <Crown className="w-6 h-6" />
-                <span className="text-base font-extrabold">ዘውድ (Heads)</span>
+                <Crown className="w-5 h-5" />
+                <span className="text-sm sm:text-base font-extrabold">ዘውድ (Heads)</span>
               </button>
 
               <button
@@ -791,14 +823,14 @@ export const GameArena: React.FC<GameArenaProps> = ({
                   playGameSound('click', soundEnabled);
                   setCoinChoice('tails');
                 }}
-                className={`p-4 rounded-2xl border-2 flex items-center justify-center gap-3 transition cursor-pointer ${
+                className={`min-h-[48px] p-3 sm:p-4 rounded-2xl border-2 flex items-center justify-center gap-2 transition cursor-pointer active:scale-[0.98] ${
                   coinChoice === 'tails'
                     ? 'border-amber-500 bg-amber-500/15 text-amber-400'
                     : 'border-slate-800 bg-slate-950/60 hover:border-slate-700 text-slate-300'
                 }`}
               >
-                <Swords className="w-6 h-6" />
-                <span className="text-base font-extrabold">ጎራዴ (Tails)</span>
+                <Swords className="w-5 h-5" />
+                <span className="text-sm sm:text-base font-extrabold">ጎራዴ (Tails)</span>
               </button>
             </div>
           </div>
@@ -806,19 +838,19 @@ export const GameArena: React.FC<GameArenaProps> = ({
 
         {/* LUCKY 1-20 PANEL */}
         {activeGame === 'lucky' && (
-          <div className="space-y-6">
-            <div className="bg-slate-950/90 border border-slate-800 rounded-2xl py-8 px-4 flex flex-col items-center justify-center min-h-[200px]">
-              <div className="w-28 h-28 rounded-3xl bg-slate-900 border-2 border-amber-500/60 flex items-center justify-center">
-                <span className="font-mono-num text-5xl font-black text-amber-400">
+          <div className="space-y-3 sm:space-y-5">
+            <div className="bg-slate-950/90 border border-slate-800 rounded-2xl py-4 sm:py-7 px-4 flex flex-col items-center justify-center min-h-[124px] sm:min-h-[175px]">
+              <div className="w-20 h-20 sm:w-28 sm:h-28 rounded-2xl sm:rounded-3xl bg-slate-900 border-2 border-amber-500/60 flex items-center justify-center">
+                <span className="font-mono-num text-4xl sm:text-5xl font-black text-amber-400">
                   {luckyDisplay}
                 </span>
               </div>
-              <p className="mt-4 text-sm font-semibold text-slate-300">{statusLabel}</p>
+              <p className="mt-2 text-xs sm:text-sm font-semibold text-slate-300">{statusLabel}</p>
             </div>
 
             <div>
-              <p className="text-xs font-semibold text-slate-400 mb-2.5">የእድል ቁጥርዎን ይምረጡ (1 - 20)</p>
-              <div className="grid grid-cols-5 sm:grid-cols-10 gap-2">
+              <p className="text-xs font-semibold text-slate-400 mb-2">የእድል ቁጥርዎን ይምረጡ (1 - 20)</p>
+              <div className="grid grid-cols-5 sm:grid-cols-10 gap-1.5 sm:gap-2">
                 {Array.from({ length: 20 }, (_, i) => i + 1).map((num) => (
                   <button
                     key={num}
@@ -828,7 +860,7 @@ export const GameArena: React.FC<GameArenaProps> = ({
                       playGameSound('click', soundEnabled);
                       setLuckyChoice(num);
                     }}
-                    className={`py-3 rounded-xl border-2 font-mono-num text-base font-black transition cursor-pointer ${
+                    className={`min-h-[42px] py-2 rounded-xl border-2 font-mono-num text-sm sm:text-base font-black transition cursor-pointer active:scale-[0.95] ${
                       luckyChoice === num
                         ? 'border-amber-500 bg-amber-500/20 text-amber-400'
                         : 'border-slate-800 bg-slate-950/60 hover:border-slate-700 text-slate-300'
@@ -845,42 +877,37 @@ export const GameArena: React.FC<GameArenaProps> = ({
         {/* Outcome Banner */}
         {lastOutcome && (
           <div
-            className={`p-4 rounded-2xl border flex items-center justify-center gap-3 text-center ${
+            className={`px-3.5 py-2.5 rounded-xl border flex items-center justify-center gap-2.5 text-center ${
               lastOutcome.won
                 ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
                 : 'bg-rose-500/15 border-rose-500/40 text-rose-300'
             }`}
           >
             {lastOutcome.won ? (
-              <CheckCircle2 className="w-6 h-6 text-emerald-400 shrink-0" />
+              <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
             ) : (
-              <XCircle className="w-6 h-6 text-rose-400 shrink-0" />
+              <XCircle className="w-5 h-5 text-rose-400 shrink-0" />
             )}
-            <div>
-              <p className="text-base sm:text-lg font-extrabold">{lastOutcome.title}</p>
-              <p className="text-xs sm:text-sm opacity-90 mt-0.5">{lastOutcome.subtitle}</p>
+            <div className="min-w-0">
+              <p className="text-sm sm:text-base font-extrabold truncate">{lastOutcome.title}</p>
+              <p className="text-[11px] opacity-90 truncate">{lastOutcome.subtitle}</p>
             </div>
           </div>
         )}
 
-        {/* Bet Amount & Play Action */}
-        <div className="pt-5 border-t border-slate-800 space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <label htmlFor="betAmountInput" className="text-xs font-bold text-slate-400">
-                የመወራረጃ መጠን (በብር)
-              </label>
-              <span className="text-[11px] font-mono-num text-slate-500">
-                ዝቅተኛ: {minBet.toLocaleString()} ብር · ያለ ገደብ (Unlimited)
-              </span>
-            </div>
-            <span className="font-mono-num text-xs sm:text-sm font-bold text-emerald-400">
-              ሊያሸንፉ የሚችሉት: {formatETB(potentialWin)} ({currentMultiplier}x)
+        {/* Mobile-Friendly Thumb-Zone Stake & Play Action */}
+        <div className="pt-3 border-t border-slate-800 space-y-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+            <label htmlFor="betAmountInput" className="font-bold text-slate-400">
+              መደብ (ዝቅተኛ: {minBet} ብር)
+            </label>
+            <span className="font-mono-num font-bold text-emerald-400">
+              ሊያሸንፉ: {formatETB(potentialWin)} ({currentMultiplier}x)
             </span>
           </div>
 
-          <div className="flex flex-col sm:flex-row gap-3">
-            <div className="relative flex-1">
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1 min-w-0">
               <input
                 id="betAmountInput"
                 type="number"
@@ -889,68 +916,106 @@ export const GameArena: React.FC<GameArenaProps> = ({
                 value={betInput}
                 onChange={(e) => setBetInput(e.target.value)}
                 disabled={isRolling}
-                className="w-full bg-slate-950 border-2 border-slate-700 focus:border-amber-500 rounded-2xl px-4 py-3.5 text-xl font-mono-num font-black text-white outline-none transition pr-14"
+                className="w-full bg-slate-950 border-2 border-slate-700 focus:border-amber-500 rounded-xl px-3 py-2.5 text-lg font-mono-num font-black text-white outline-none transition pr-11"
               />
-              <span className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-sm">
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-xs">
                 ብር
               </span>
             </div>
 
-            <div className="grid grid-cols-5 gap-1.5">
-              {[25, 50, 100, 250].map((preset) => (
-                <button
-                  key={preset}
-                  type="button"
-                  onClick={() => {
-                    if (isRolling) return;
-                    playGameSound('click', soundEnabled);
-                    setBetInput(String(preset));
-                  }}
-                  className="px-3 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-mono-num font-bold text-slate-200 transition cursor-pointer"
-                >
-                  {preset}
-                </button>
-              ))}
+            <button
+              type="button"
+              disabled={isRolling}
+              onClick={() => adjustBetByFactor(0.5)}
+              className="min-h-[46px] px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-mono-num font-black text-slate-200 cursor-pointer shrink-0 active:scale-[0.96]"
+            >
+              ½
+            </button>
+            <button
+              type="button"
+              disabled={isRolling}
+              onClick={() => adjustBetByFactor(2)}
+              className="min-h-[46px] px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-mono-num font-black text-slate-200 cursor-pointer shrink-0 active:scale-[0.96]"
+            >
+              2×
+            </button>
+            <button
+              type="button"
+              disabled={isRolling}
+              onClick={() => {
+                if (isRolling) return;
+                playGameSound('click', soundEnabled);
+                setBetInput(String(Math.max(minBet, Math.floor(wallet.balance))));
+              }}
+              className="min-h-[46px] px-3 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-xs font-bold text-amber-400 transition cursor-pointer whitespace-nowrap shrink-0 active:scale-[0.96]"
+            >
+              ሁሉንም
+            </button>
+          </div>
+
+          <div className="grid grid-cols-6 gap-1.5">
+            {[10, 25, 50, 100, 250, 500].map((preset) => (
               <button
+                key={preset}
                 type="button"
+                disabled={isRolling}
                 onClick={() => {
                   if (isRolling) return;
                   playGameSound('click', soundEnabled);
-                  setBetInput(String(Math.floor(wallet.balance)));
+                  setBetInput(String(preset));
                 }}
-                className="px-3 py-2.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-xs font-bold text-amber-400 transition cursor-pointer whitespace-nowrap"
+                className={`min-h-[38px] py-1.5 rounded-lg text-xs font-mono-num font-black transition cursor-pointer active:scale-[0.96] ${
+                  numericBet === preset
+                    ? 'bg-amber-500 text-slate-950'
+                    : 'bg-slate-800 hover:bg-slate-700 text-slate-200'
+                }`}
               >
-                ሁሉንም
+                {preset}
               </button>
-            </div>
+            ))}
           </div>
 
           <button
             type="button"
             disabled={isRolling}
             onClick={handlePlay}
-            className="w-full py-4 px-6 rounded-2xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-60 disabled:cursor-not-allowed text-slate-950 font-black text-lg flex items-center justify-center gap-2.5 transition cursor-pointer"
+            className="w-full min-h-[52px] py-3.5 px-5 rounded-2xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-60 disabled:cursor-not-allowed text-slate-950 font-black text-base sm:text-lg flex items-center justify-center gap-2 transition active:scale-[0.98] cursor-pointer shadow-lg"
           >
             <Play className="w-5 h-5 fill-current" />
             <span>
               {isRolling
                 ? 'እየተጫወተ ነው...'
                 : activeGame === 'dice'
-                  ? `ዳይሱን ወርውር (${numericBet} ብር)`
+                  ? `ዳይሱን ወርውር (${numericBet.toLocaleString()} ብር)`
                   : activeGame === 'coin'
-                    ? `ሳንቲሙን ገልብጥ (${numericBet} ብር)`
-                    : `እድልህን ሞክር (${numericBet} ብር)`}
+                    ? `ሳንቲሙን ገልብጥ (${numericBet.toLocaleString()} ብር)`
+                    : `እድልህን ሞክር (${numericBet.toLocaleString()} ብር)`}
             </span>
           </button>
         </div>
       </section>
 
-      <GamingTips
-        activeConfig={activeConfig}
-        walletBalance={wallet.balance}
-        isRolling={isRolling}
-        onApplyStrategy={handleApplyStrategy}
-      />
+      {/* Collapsible Strategy Presets so Main Game Fits Mobile Screen Cleanly */}
+      <div className="bg-slate-900/90 border border-slate-800 rounded-2xl overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setShowTips((prev) => !prev)}
+          className="w-full px-4 py-3 flex items-center justify-between text-xs sm:text-sm font-bold text-slate-200 hover:bg-slate-800/60 cursor-pointer"
+        >
+          <span>የአጨዋወት ስልቶች እና ፈጣን ምክሮች (Pro Tips)</span>
+          {showTips ? <ChevronUp className="w-4 h-4 text-amber-400" /> : <ChevronDown className="w-4 h-4 text-amber-400" />}
+        </button>
+        {showTips && (
+          <div className="p-3 sm:p-4 border-t border-slate-800">
+            <GamingTips
+              activeConfig={activeConfig}
+              walletBalance={wallet.balance}
+              isRolling={isRolling}
+              onApplyStrategy={handleApplyStrategy}
+            />
+          </div>
+        )}
+      </div>
     </div>
   );
 };

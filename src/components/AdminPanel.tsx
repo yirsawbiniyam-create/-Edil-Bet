@@ -1083,7 +1083,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 <input
                   type="number"
                   required
-                  min={100}
+                  min={50}
                   max={500000}
                   step={1}
                   value={manualTxAmountInput}

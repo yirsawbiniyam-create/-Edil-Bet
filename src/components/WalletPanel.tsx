@@ -59,7 +59,7 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
   // Deposit Form
   const [depositPhone, setDepositPhone] = useState(registeredPhone || '');
   const [txIdInput, setTxIdInput] = useState('');
-  const [depositAmountInput, setDepositAmountInput] = useState('500');
+  const [depositAmountInput, setDepositAmountInput] = useState('50');
   const [isVerifyingDeposit, setIsVerifyingDeposit] = useState(false);
   const [depositFeedback, setDepositFeedback] = useState<{
     type: 'success' | 'info' | 'error';
@@ -80,7 +80,7 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
 
   // Withdraw Form
   const [withdrawPhone, setWithdrawPhone] = useState(registeredPhone || '');
-  const [withdrawAmount, setWithdrawAmount] = useState('500');
+  const [withdrawAmount, setWithdrawAmount] = useState('');
   const [isSubmittingWithdraw, setIsSubmittingWithdraw] = useState(false);
   const [withdrawFeedback, setWithdrawFeedback] = useState<{
     type: 'success' | 'info' | 'error';
@@ -278,8 +278,8 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
             throw new Error('ይህ የትራንዛክሽን ቁጥር ከዚህ በፊት ጥቅም ላይ ውሏል! (Status: Used)');
           }
           const parsedAmt = Number(smsData.amount);
-          if (!Number.isFinite(parsedAmt) || parsedAmt < 100 || parsedAmt > 500000) {
-            throw new Error('በSMS የተመዘገበው የብር መጠን ከተፈቀደው ገደብ (100 - 500,000 ብር) ውጭ ነው።');
+          if (!Number.isFinite(parsedAmt) || parsedAmt < 50 || parsedAmt > 500000) {
+            throw new Error('በSMS የተመዘገበው የብር መጠን ከተፈቀደው ገደብ (50 - 500,000 ብር) ውጭ ነው።');
           }
           verifiedAmount = Number(parsedAmt.toFixed(2));
           hasFirestoreSms = true;
@@ -289,7 +289,7 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
           typeof serverSmsCheck.amount === 'number'
         ) {
           const parsedSrvAmt = Number(serverSmsCheck.amount);
-          if (!Number.isFinite(parsedSrvAmt) || parsedSrvAmt < 100 || parsedSrvAmt > 500000) {
+          if (!Number.isFinite(parsedSrvAmt) || parsedSrvAmt < 50 || parsedSrvAmt > 500000) {
             throw new Error('በቴሌብር ዌብሆክ የተመዘገበው የብር መጠን ከተፈቀደው ገደብ ውጭ ነው።');
           }
           verifiedAmount = Number(parsedSrvAmt.toFixed(2));
@@ -539,7 +539,7 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
       const displayMsg =
         rawMsg && !rawMsg.startsWith('{')
           ? rawMsg
-          : 'ትራንዛክሽኑን መላክ አልተቻለም። እባክዎ የላኩትን ትክክለኛ TX ID፣ የብር መጠን (>= 100) እና ስልክ ቁጥር አረጋግጠው እንደገና ይሞክሩ።';
+          : 'ትራንዛክሽኑን መላክ አልተቻለም። እባክዎ የላኩትን ትክክለኛ TX ID፣ የብር መጠን (>= 50) እና ስልክ ቁጥር አረጋግጠው እንደገና ይሞክሩ።';
       setDepositFeedback({ type: 'error', text: displayMsg });
       onNotify(displayMsg, 'error');
     } finally {
@@ -567,8 +567,8 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
       onNotify(msg, 'error');
       return;
     }
-    if (!Number.isFinite(numericAmount) || numericAmount < 500) {
-      const msg = 'ዝቅተኛው የዊዝድሮው መጠን 500 ብር ነው።';
+    if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+      const msg = 'እባክዎ ትክክለኛ የዊዝድሮው መጠን ያስገቡ (ከ0 ብር በላይ)።';
       setWithdrawFeedback({ type: 'error', text: msg });
       onNotify(msg, 'error');
       return;
@@ -626,7 +626,7 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
           }`}
         >
           <ArrowDownCircle className="w-4 h-4" />
-          <span>ዲፖሲት (ዝቅተኛ 100 ብር)</span>
+          <span>ዲፖሲት (ዝቅተኛ 50 ብር)</span>
         </button>
 
         <button
@@ -639,7 +639,7 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
           }`}
         >
           <ArrowUpCircle className="w-4 h-4" />
-          <span>ዊዝድሮው (ዝቅተኛ 500 ብር)</span>
+          <span>ዊዝድሮው (ያለ ገደብ)</span>
         </button>
       </div>
 
@@ -666,7 +666,7 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
                 </span>
               </div>
               <p className="text-xs text-slate-400">
-                የአካውንት ስም: <strong className="text-slate-200">{settings?.accountName || '—'}</strong> · ዝቅተኛ ዲፖሲት: <strong className="text-slate-200">100.00 ብር</strong>
+                የአካውንት ስም: <strong className="text-slate-200">{settings?.accountName || '—'}</strong> · ዝቅተኛ ዲፖሲት: <strong className="text-slate-200">50.00 ብር</strong>
               </p>
             </div>
 
@@ -689,7 +689,7 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
             </li>
             <li className="bg-slate-950/70 border border-slate-800 rounded-xl p-3.5">
               <span className="font-bold text-amber-400 block mb-1">2. ብሩን ያስተላልፉ</span>
-              ቢያንስ 100 ብር ወደዚህ ስልክ ቁጥር በቴሌብር ያስተላልፉ።
+              ቢያንስ 50 ብር ወደዚህ ስልክ ቁጥር በቴሌብር ያስተላልፉ።
             </li>
             <li className="bg-slate-950/70 border border-slate-800 rounded-xl p-3.5">
               <span className="font-bold text-amber-400 block mb-1">3. ትራንሳክሽን አይዲ ያስገቡ</span>
@@ -748,7 +748,7 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
 
               <div>
                 <label className="block text-xs font-bold text-slate-400 mb-1.5">
-                  የላኩት የብር መጠን (ዝቅተኛ 100 ብር)
+                  የላኩት የብር መጠን (ዝቅተኛ 50 ብር)
                 </label>
                 {smsLookupState.state === 'unused' && typeof smsLookupState.amount === 'number' ? (
                   <div className="w-full bg-slate-950 border border-emerald-500/50 rounded-xl px-4 py-3 text-base font-mono-num flex items-center justify-between">
@@ -762,13 +762,13 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
                     <input
                       type="number"
                       required
-                      min={100}
+                      min={50}
                       max={500000}
                       step={1}
                       disabled={isVerifyingDeposit}
                       value={depositAmountInput}
                       onChange={(e) => setDepositAmountInput(e.target.value)}
-                      placeholder="500"
+                      placeholder="50"
                       className="w-full bg-slate-950 border border-slate-700 focus:border-emerald-500 rounded-xl px-4 py-3 pr-14 text-base font-mono-num text-white outline-none"
                     />
                     <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
@@ -925,7 +925,7 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
           {!wallet.hasDeposited && (
             <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/35 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <p className="text-xs sm:text-sm text-amber-200 font-semibold">
-                ማሳሰቢያ፡ ዝቅተኛው ዊዝድሮው 500 ብር ነው። በቴሌብር ዲፖሲት ማድረግ ከፈለጉ ወደ ዲፖሲት ክፍል መሄድ ይችላሉ።
+                ማሳሰቢያ፡ የፈለጉትን የብር መጠን ያለ ምንም ዝቅተኛ ገደብ ዊዝድሮው ማድረግ ይችላሉ። በቴሌብር ዲፖሲት ማድረግ ከፈለጉ (ዝቅተኛ 50 ብር) ወደ ዲፖሲት ክፍል መሄድ ይችላሉ።
               </p>
               <button
                 type="button"
@@ -1010,7 +1010,7 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
 
               <div>
                 <label htmlFor="withdrawAmountInput" className="block text-xs font-bold text-slate-300 mb-1.5">
-                  የዊዝድሮው መጠን (ዝቅተኛ 500 ብር)
+                  የዊዝድሮው መጠን (የፈለጉትን መጠን · ያለ ገደብ)
                 </label>
                 <div className="relative">
                   <input
@@ -1018,12 +1018,12 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
                     type="number"
                     required
                     disabled={isSubmittingWithdraw}
-                    min={500}
-                    max={Math.max(500, Math.floor(wallet.balance))}
-                    step={1}
+                    min={0.01}
+                    max={Math.max(0.01, wallet.balance)}
+                    step="any"
                     value={withdrawAmount}
                     onChange={(e) => setWithdrawAmount(e.target.value)}
-                    placeholder="500"
+                    placeholder="የፈለጉትን መጠን (ምሳሌ 50)"
                     className="w-full bg-slate-950 border border-slate-700 focus:border-amber-500 rounded-xl px-4 py-3 text-base font-mono-num text-white outline-none pr-12"
                   />
                   <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
@@ -1033,7 +1033,7 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
 
                 {/* Quick Amount Chips */}
                 <div className="flex flex-wrap gap-1.5 mt-2">
-                  {[500, 1000, 2000, 5000].map((preset) => (
+                  {[25, 50, 100, 500].map((preset) => (
                     <button
                       key={preset}
                       type="button"
@@ -1044,14 +1044,14 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
                       {preset.toLocaleString()}
                     </button>
                   ))}
-                  {wallet.balance >= 500 && (
+                  {wallet.balance > 0 && (
                     <button
                       type="button"
                       disabled={isSubmittingWithdraw}
-                      onClick={() => setWithdrawAmount(String(Math.floor(wallet.balance)))}
+                      onClick={() => setWithdrawAmount(String(Number(wallet.balance.toFixed(2))))}
                       className="px-2.5 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-[11px] font-bold text-amber-300 cursor-pointer transition"
                     >
-                      ሁሉም ({Math.floor(wallet.balance).toLocaleString()})
+                      ሁሉም ({Number(wallet.balance.toFixed(2)).toLocaleString()})
                     </button>
                   )}
                 </div>
@@ -1059,7 +1059,7 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
                 <p className="text-[11px] text-slate-400 mt-1.5">
                   ያለዎት ቀሪ ሂሳብ:{' '}
                   <span className="font-mono-num text-amber-400 font-bold">{formatETB(wallet.balance)}</span>
-                  {Number(withdrawAmount) >= 500 && Number(withdrawAmount) <= wallet.balance && (
+                  {Number(withdrawAmount) > 0 && Number(withdrawAmount) <= wallet.balance && (
                     <>
                       {' '}· ከተቀነሰ በኋላ:{' '}
                       <span className="font-mono-num text-slate-200 font-bold">
@@ -1073,16 +1073,16 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
 
             <button
               type="submit"
-              disabled={isSubmittingWithdraw || wallet.balance < 500}
+              disabled={isSubmittingWithdraw || wallet.balance <= 0}
               className="w-full py-3.5 px-6 rounded-2xl bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-950 font-black text-base flex items-center justify-center gap-2 transition cursor-pointer"
             >
               <ArrowUpCircle className="w-5 h-5" />
               <span>
                 {isSubmittingWithdraw
                   ? 'ጥያቄው በPending እየተላከ ነው...'
-                  : wallet.balance < 500
-                    ? 'ዊዝድሮው ለመጠየቅ ቢያንስ 500 ብር ቀሪ ሂሳብ ያስፈልጋል'
-                    : `ዊዝድሮው ጠይቅ (${withdrawAmount ? formatETB(Number(withdrawAmount) || 0) : '500 ብር'})`}
+                  : wallet.balance <= 0
+                    ? 'ዊዝድሮው ለመጠየቅ ቀሪ ሂሳብ ያስፈልጋል'
+                    : `ዊዝድሮው ጠይቅ (${Number(withdrawAmount) > 0 ? formatETB(Number(withdrawAmount)) : 'መጠን ያስገቡ'})`}
               </span>
             </button>
           </form>
