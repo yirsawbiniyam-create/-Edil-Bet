@@ -24,6 +24,7 @@ import {
   Timer,
   Trash2,
   Trophy,
+  Tv,
   Volume2,
   VolumeX,
   Wallet,
@@ -79,8 +80,14 @@ import {
 import { useLanguage } from '../lib/i18n';
 import { playGameSound } from '../lib/sound';
 import { FootballMostBet } from './FootballMostBet';
+import {
+  LiveBroadcastFeedItem,
+  LiveMatchVideoPlayer,
+  matchToBroadcastFeed,
+} from './LiveMatchVideoPlayer';
 import { MatchMarketsModal } from './MatchMarketsModal';
 import { MatchStatsModal } from './MatchStatsModal';
+import stadiumBannerImg from '../assets/images/sportsbook_stadium_banner_1794733915064.jpg';
 import {
   FootballMarketKey,
   FootballPopularityRecord,
@@ -223,6 +230,13 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
   const [busyTicketId, setBusyTicketId] = useState<string | null>(null);
   const [marketsMatchId, setMarketsMatchId] = useState<string | null>(null);
   const [statsMatchId, setStatsMatchId] = useState<string | null>(null);
+  const [inlineVideoOpen, setInlineVideoOpen] = useState<boolean>(true);
+  const [activeVideoMatchId, setActiveVideoMatchId] = useState<string | null>(null);
+  const [modalVideoState, setModalVideoState] = useState<{
+    source: 'live_matches' | 'ticket';
+    ticketId?: string;
+    activeId: string;
+  } | null>(null);
 
   // 15-Minute Pre-Match Push Notifications & "Remind me" local state flags
   const [pushEnabled, setPushEnabled] = useState<boolean>(() => loadPushEnabledFlag());
@@ -282,8 +296,74 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
     [statsMatchId, scheduleMatches],
   );
 
+  const liveVideoFeeds = useMemo<LiveBroadcastFeedItem[]>(() => {
+    const liveOnes = scheduleMatches.filter((m) => m.isLive);
+    if (liveOnes.length > 0) return liveOnes.map(matchToBroadcastFeed);
+    return scheduleMatches.slice(0, 4).map((m) => ({
+      ...matchToBroadcastFeed(m),
+      minute: m.liveMinute ?? 1,
+      homeGoals: m.liveHomeGoals ?? 0,
+      awayGoals: m.liveAwayGoals ?? 0,
+    }));
+  }, [scheduleMatches]);
+
+  const modalVideoFeeds = useMemo<LiveBroadcastFeedItem[]>(() => {
+    if (!modalVideoState) return [];
+    if (modalVideoState.source === 'ticket' && modalVideoState.ticketId) {
+      const ticket = tickets.find((t) => t.id === modalVideoState.ticketId);
+      if (ticket) {
+        const snap = liveSimMap[ticket.id] || {
+          minute: Math.max(1, ticket.currentMinute || 1),
+          picks: ticket.picks,
+        };
+        return snap.picks.map((leg) => {
+          const matchedSchedule = scheduleMatches.find((m) => m.id === leg.matchId);
+          return {
+            id: leg.matchId,
+            home: leg.home,
+            away: leg.away,
+            homeCode: leg.homeCode,
+            awayCode: leg.awayCode,
+            homeLogo: matchedSchedule?.homeLogo,
+            awayLogo: matchedSchedule?.awayLogo,
+            leagueLabel: matchedSchedule?.leagueLabel || 'Edil Bet Live Ticket',
+            minute: snap.minute,
+            homeGoals: leg.homeGoals,
+            awayGoals: leg.awayGoals,
+            htHomeGoals: leg.htHomeGoals,
+            htAwayGoals: leg.htAwayGoals,
+            homeCards: leg.homeCards,
+            awayCards: leg.awayCards,
+            homeCorners: leg.homeCorners,
+            awayCorners: leg.awayCorners,
+            isLive: ticket.status === 'live',
+            besoccerUrl: matchedSchedule?.besoccerUrl,
+            matchRef: matchedSchedule,
+            ticketPickRef: leg,
+          };
+        });
+      }
+    }
+    return liveVideoFeeds;
+  }, [modalVideoState, tickets, liveSimMap, scheduleMatches, liveVideoFeeds]);
+
+  const openMatchLiveVideo = (match: ScheduledMatch) => {
+    playGameSound('click', soundEnabled);
+    setActiveVideoMatchId(match.id);
+    setModalVideoState({ source: 'live_matches', activeId: match.id });
+  };
+
+  const openTicketLiveVideo = (ticketId: string, activePickMatchId?: string) => {
+    playGameSound('click', soundEnabled);
+    const ticket = tickets.find((t) => t.id === ticketId);
+    const firstId = activePickMatchId || ticket?.picks[0]?.matchId || '';
+    if (!firstId) return;
+    setModalVideoState({ source: 'ticket', ticketId, activeId: firstId });
+  };
+
   // Hardware / Browser Back button closes open Sportsbook sheets or secondary views first
   const hasOverlayOpen =
+    Boolean(modalVideoState) ||
     Boolean(statsMatchId) ||
     Boolean(marketsMatchId) ||
     mobileSlipOpen ||
@@ -306,7 +386,9 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
 
   useEffect(() => {
     const onPopState = () => {
-      if (statsMatchId) {
+      if (modalVideoState) {
+        setModalVideoState(null);
+      } else if (statsMatchId) {
         setStatsMatchId(null);
       } else if (marketsMatchId) {
         setMarketsMatchId(null);
@@ -322,7 +404,7 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
     };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
-  }, [statsMatchId, marketsMatchId, mobileSlipOpen, checkBetOpen, subTab, onChangeSportsSection]);
+  }, [modalVideoState, statsMatchId, marketsMatchId, mobileSlipOpen, checkBetOpen, subTab, onChangeSportsSection]);
 
   const loadLiveSchedule = async (forceRefresh = false, showToast = false) => {
     setSyncingSchedule(true);
@@ -377,7 +459,7 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
     void loadLiveSchedule(false, false);
     const refreshTimer = window.setInterval(() => {
       void loadLiveSchedule(false, false);
-    }, 90_000);
+    }, 60_000);
     return () => window.clearInterval(refreshTimer);
   }, []);
 
@@ -1493,6 +1575,17 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
             </div>
 
             <div className="flex items-center gap-1.5 shrink-0">
+              {(isLiveMode || match.isLive) && (
+                <button
+                  type="button"
+                  onClick={() => openMatchLiveVideo(match)}
+                  title={bi('በቪድዮ ይመልከቱ', 'Watch Live Video')}
+                  className="min-h-[36px] px-2 rounded bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-black flex items-center gap-1 cursor-pointer transition"
+                >
+                  <Tv className="w-3.5 h-3.5" />
+                  <span>{bi('ቪድዮ', 'Live TV')}</span>
+                </button>
+              )}
               {!match.isLive && !isLiveMode && (
                 <button
                   type="button"
@@ -1694,6 +1787,16 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
           })}
 
           <div className="flex items-center gap-1">
+            {(isLiveMode || match.isLive) && (
+              <button
+                type="button"
+                onClick={() => openMatchLiveVideo(match)}
+                title={bi('በቪድዮ ይመልከቱ (Live TV)', 'Watch Live Video Broadcast')}
+                className="h-10 w-8 rounded bg-rose-600 hover:bg-rose-700 text-white flex items-center justify-center cursor-pointer transition shrink-0"
+              >
+                <Tv className="w-4 h-4" />
+              </button>
+            )}
             {!match.isLive && !isLiveMode && (
               <button
                 type="button"
@@ -2406,7 +2509,7 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
           {/* Hero Stadium Spotlight Banner */}
           <section className="relative rounded-xl overflow-hidden border border-slate-200 shadow-sm min-h-[155px] sm:min-h-[190px] flex items-end bg-slate-900">
             <img
-              src="/src/assets/images/sportsbook_stadium_banner_1794733915064.jpg"
+              src={stadiumBannerImg}
               alt={bi('እድል ቤት ስታዲየም', 'Edil Bet Football Stadium')}
               referrerPolicy="no-referrer"
               className="absolute inset-0 w-full h-full object-cover"
@@ -2570,6 +2673,16 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
                           {bi('የጨዋታ ውጤት', 'Match Result')}
                         </span>
                         <div className="flex items-center gap-1.5 shrink-0">
+                          {match.isLive && (
+                            <button
+                              type="button"
+                              onClick={() => openMatchLiveVideo(match)}
+                              className="px-2 py-1 rounded bg-rose-600 hover:bg-rose-700 text-white font-black text-[10px] inline-flex items-center gap-1 cursor-pointer transition"
+                            >
+                              <Tv className="w-3 h-3" />
+                              <span>{bi('ቪድዮ', 'TV')}</span>
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => {
@@ -2784,21 +2897,86 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
                   ref={liveEventsRef}
                   className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs"
                 >
-                  <div className="bg-[#0E8A38] text-white px-3.5 py-2.5 flex items-center justify-between gap-2">
+                  <div className="bg-[#0E8A38] text-white px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2">
                     <h3 className="text-sm font-extrabold flex items-center gap-2">
                       <span aria-hidden="true" className="text-[#9AD84B] tracking-widest text-xs">
                         •••
                       </span>
-                      <span>{bi('ቀጥታ ጨዋታዎች · Live Events', 'Live Events')}</span>
+                      <span>{bi('ቀጥታ ጨዋታዎች · Live Events & TV', 'Live Events & Video')}</span>
                     </h3>
-                    <span className="px-2.5 py-0.5 rounded bg-[#9AD84B] text-slate-950 font-mono-num text-[11px] font-black">
-                      {liveMatchesList.length} LIVE
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          playGameSound('click', soundEnabled);
+                          setInlineVideoOpen((prev) => !prev);
+                        }}
+                        className={`px-2.5 py-1 rounded text-[11px] font-black flex items-center gap-1 cursor-pointer transition ${
+                          inlineVideoOpen
+                            ? 'bg-rose-600 text-white'
+                            : 'bg-black/25 hover:bg-black/40 text-white'
+                        }`}
+                      >
+                        <Tv className="w-3.5 h-3.5" />
+                        <span>
+                          {inlineVideoOpen
+                            ? bi('ቪድዮ ደብቅ', 'Hide TV')
+                            : bi('በቪድዮ ይመልከቱ', 'Watch Live TV')}
+                        </span>
+                      </button>
+                      <span className="px-2.5 py-0.5 rounded bg-[#9AD84B] text-slate-950 font-mono-num text-[11px] font-black">
+                        {liveMatchesList.length} LIVE
+                      </span>
+                    </div>
                   </div>
+
+                  {/* Embedded Live TV Broadcast Video Player */}
+                  {inlineVideoOpen && liveMatchesList.length > 0 && (
+                    <div className="p-3 bg-[#081018] border-b border-slate-200">
+                      <LiveMatchVideoPlayer
+                        feeds={liveMatchesList.map(matchToBroadcastFeed)}
+                        activeFeedId={
+                          activeVideoMatchId &&
+                          liveMatchesList.some((m) => m.id === activeVideoMatchId)
+                            ? activeVideoMatchId
+                            : liveMatchesList[0].id
+                        }
+                        onSelectFeed={(id) => setActiveVideoMatchId(id)}
+                        soundEnabled={soundEnabled}
+                        onToggleSound={onToggleSound}
+                        mode="inline"
+                        onExpandTheater={() => {
+                          const targetId =
+                            activeVideoMatchId &&
+                            liveMatchesList.some((m) => m.id === activeVideoMatchId)
+                              ? activeVideoMatchId
+                              : liveMatchesList[0].id;
+                          setModalVideoState({
+                            source: 'live_matches',
+                            activeId: targetId,
+                          });
+                        }}
+                        selectedMarket={
+                          selectedPicksByMatch[
+                            activeVideoMatchId &&
+                            liveMatchesList.some((m) => m.id === activeVideoMatchId)
+                              ? activeVideoMatchId
+                              : liveMatchesList[0].id
+                          ]
+                        }
+                        getScaledOdd={getScaledOdd}
+                        onQuickPick={togglePick}
+                        onOpenMarkets={(m) => {
+                          playGameSound('click', soundEnabled);
+                          setMarketsMatchId(m.id);
+                        }}
+                      />
+                    </div>
+                  )}
 
                   <div className="sm:hidden px-3 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between text-[11px] font-bold text-slate-600">
                     <span>{bi('ቀጥታ ውጤት እና ኦዶች', 'Live Score & 1 / X / 2')}</span>
-                    <span>{bi('ስታትስ / +135', 'Stats / +135')}</span>
+                    <span>{bi('ቪድዮ / +135', 'Video / +135')}</span>
                   </div>
                   <div className="hidden sm:grid sm:grid-cols-[64px_1fr_repeat(3,64px)_118px] items-center gap-1 px-3 py-2 bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-600">
                     <span>{bi('ውጤት', 'Score')}</span>
@@ -3176,7 +3354,15 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
                         </h3>
                       </div>
 
-                      <div className="flex items-center gap-4 text-xs font-mono-num">
+                      <div className="flex flex-wrap items-center gap-3 text-xs font-mono-num">
+                        <button
+                          type="button"
+                          onClick={() => openTicketLiveVideo(ticket.id)}
+                          className="px-2.5 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-sans font-black text-[11px] flex items-center gap-1 cursor-pointer transition"
+                        >
+                          <Tv className="w-3.5 h-3.5" />
+                          <span>{bi('በቪድዮ ተመልከት', 'Watch Live')}</span>
+                        </button>
                         <div>
                           <span className="text-emerald-100 block text-[10px]">{bi('መወራረጃ', 'Stake')}</span>
                           <span className="font-black">{formatETB(ticket.betAmount)}</span>
@@ -3235,6 +3421,15 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
                             </div>
 
                             <div className="flex items-center gap-2 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => openTicketLiveVideo(ticket.id, leg.matchId)}
+                                title={bi('ይህን ጨዋታ በቪድዮ ይመልከቱ', 'Watch this leg live in video')}
+                                className="px-2 py-1.5 rounded bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-black inline-flex items-center gap-1 cursor-pointer transition"
+                              >
+                                <Tv className="w-3 h-3" />
+                                <span>{bi('ቪድዮ', 'TV')}</span>
+                              </button>
                               <span className="font-mono-num text-sm font-black text-slate-900 bg-white border border-slate-200 px-2.5 py-1 rounded">
                                 {leg.homeGoals} - {leg.awayGoals}
                               </span>
@@ -3632,6 +3827,28 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
             setMarketsMatchId(id);
           }}
           onClose={() => setStatsMatchId(null)}
+        />
+      )}
+
+      {/* LIVE MATCH VIDEO BROADCAST THEATER MODAL */}
+      {modalVideoState && modalVideoFeeds.length > 0 && (
+        <LiveMatchVideoPlayer
+          feeds={modalVideoFeeds}
+          activeFeedId={modalVideoState.activeId}
+          onSelectFeed={(id) =>
+            setModalVideoState((prev) => (prev ? { ...prev, activeId: id } : null))
+          }
+          soundEnabled={soundEnabled}
+          onToggleSound={onToggleSound}
+          mode="modal"
+          onClose={() => setModalVideoState(null)}
+          selectedMarket={selectedPicksByMatch[modalVideoState.activeId]}
+          getScaledOdd={getScaledOdd}
+          onQuickPick={togglePick}
+          onOpenMarkets={(m) => {
+            setModalVideoState(null);
+            setMarketsMatchId(m.id);
+          }}
         />
       )}
     </div>

@@ -4,14 +4,18 @@ import {
   BarChart3,
   CheckCircle2,
   Clock,
+  Flame,
   History,
   Radio,
+  Scale,
   Ticket,
   TrendingDown,
   TrendingUp,
+  Trophy,
   XCircle,
 } from 'lucide-react';
 import { formatETB } from '../lib/gameEngine';
+import { useLanguage } from '../lib/i18n';
 import { BetRecord, FootballTicket } from '../types';
 
 interface HistoryPanelProps {
@@ -20,6 +24,16 @@ interface HistoryPanelProps {
 }
 
 type ChartMode = 'trend' | 'byGame';
+type GameGroupKey = 'all' | 'football' | 'dice' | 'coin' | 'lucky';
+
+interface SettledOutcome {
+  id: string;
+  groupKey: Exclude<GameGroupKey, 'all'>;
+  won: boolean;
+  betAmount: number;
+  payout: number;
+  timestampMs: number;
+}
 
 interface TrendPoint {
   index: number;
@@ -32,25 +46,37 @@ interface TrendPoint {
 }
 
 interface GameBreakdownItem {
-  key: string;
+  key: Exclude<GameGroupKey, 'all'>;
   label: string;
   count: number;
   wins: number;
+  losses: number;
   wagered: number;
   wonAmount: number;
   lostAmount: number;
 }
 
-function getGameGroup(gameType: BetRecord['gameType']): { key: string; label: string } {
+function getGameGroup(gameType: BetRecord['gameType']): {
+  key: Exclude<GameGroupKey, 'all'>;
+  label: string;
+} {
   if (gameType === 'football') return { key: 'football', label: 'እግር ኳስ ቤቲንግ' };
   if (gameType === 'coin') return { key: 'coin', label: 'የሳንቲም ውርርድ' };
   if (gameType === 'lucky') return { key: 'lucky', label: 'የእድል ቁጥር (1-20)' };
   return { key: 'dice', label: 'የዳይስ ጨዋታ' };
 }
 
+function formatWinLossRatio(wins: number, losses: number): string {
+  if (wins === 0 && losses === 0) return '0.00';
+  if (losses === 0) return '∞';
+  return (wins / losses).toFixed(2);
+}
+
 export const HistoryPanel: React.FC<HistoryPanelProps> = ({ bets, tickets = [] }) => {
+  const { bi } = useLanguage();
   const [filter, setFilter] = useState<'all' | 'wins' | 'losses'>('all');
   const [ticketFilter, setTicketFilter] = useState<'all' | 'live' | 'settled'>('all');
+  const [ratioGameFilter, setRatioGameFilter] = useState<GameGroupKey>('all');
   const [chartMode, setChartMode] = useState<ChartMode>('trend');
   const [hoveredPointIdx, setHoveredPointIdx] = useState<number | null>(null);
 
@@ -69,6 +95,133 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({ bets, tickets = [] }
     () => tickets.filter((t) => t.status === 'live').length,
     [tickets],
   );
+
+  // Deduplicated settled outcomes across bets and any settled football tickets not already in bets
+  const settledOutcomes = useMemo<SettledOutcome[]>(() => {
+    const seenIds = new Set<string>();
+    const combined: SettledOutcome[] = [];
+
+    for (const b of bets) {
+      seenIds.add(b.id);
+      const grp = getGameGroup(b.gameType);
+      combined.push({
+        id: b.id,
+        groupKey: grp.key,
+        won: Boolean(b.won),
+        betAmount: b.betAmount,
+        payout: b.payout,
+        timestampMs: b.createdAt?.toMillis?.() || 0,
+      });
+    }
+
+    for (const t of tickets) {
+      if (t.status === 'live' || seenIds.has(t.id)) continue;
+      seenIds.add(t.id);
+      const isWin = t.status === 'won' || (t.status === 'cashed_out' && t.payout > 0);
+      combined.push({
+        id: t.id,
+        groupKey: 'football',
+        won: isWin,
+        betAmount: t.betAmount,
+        payout: t.payout,
+        timestampMs: t.updatedAt?.toMillis?.() || t.createdAt?.toMillis?.() || 0,
+      });
+    }
+
+    return combined.sort((a, b) => a.timestampMs - b.timestampMs);
+  }, [bets, tickets]);
+
+  const winLossSummary = useMemo(() => {
+    const scoped =
+      ratioGameFilter === 'all'
+        ? settledOutcomes
+        : settledOutcomes.filter((o) => o.groupKey === ratioGameFilter);
+
+    let wins = 0;
+    let losses = 0;
+    let wagered = 0;
+    let totalPayout = 0;
+    let bestWinStreak = 0;
+    let runningWinStreak = 0;
+
+    for (const item of scoped) {
+      wagered += item.betAmount;
+      if (item.won) {
+        wins += 1;
+        totalPayout += item.payout;
+        runningWinStreak += 1;
+        if (runningWinStreak > bestWinStreak) {
+          bestWinStreak = runningWinStreak;
+        }
+      } else {
+        losses += 1;
+        runningWinStreak = 0;
+      }
+    }
+
+    let currentStreakType: 'win' | 'loss' | 'none' = 'none';
+    let currentStreakCount = 0;
+    if (scoped.length > 0) {
+      const lastWon = scoped[scoped.length - 1].won;
+      currentStreakType = lastWon ? 'win' : 'loss';
+      for (let i = scoped.length - 1; i >= 0; i -= 1) {
+        if (scoped[i].won === lastWon) {
+          currentStreakCount += 1;
+        } else {
+          break;
+        }
+      }
+    }
+
+    const total = wins + losses;
+    const winRateExact = total > 0 ? (wins / total) * 100 : 0;
+    const lossRateExact = total > 0 ? (losses / total) * 100 : 0;
+    const ratioNumeric = losses > 0 ? wins / losses : wins > 0 ? wins : 0;
+    const ratioDisplay = formatWinLossRatio(wins, losses);
+    const netProfit = totalPayout - wagered;
+
+    return {
+      total,
+      wins,
+      losses,
+      winRateExact,
+      lossRateExact,
+      ratioNumeric,
+      ratioDisplay,
+      bestWinStreak,
+      currentStreakType,
+      currentStreakCount,
+      netProfit,
+    };
+  }, [settledOutcomes, ratioGameFilter]);
+
+  const perGameRatioRows = useMemo(() => {
+    const groups: Array<{ key: Exclude<GameGroupKey, 'all'>; labelAm: string; labelEn: string }> = [
+      { key: 'football', labelAm: 'እግር ኳስ ቤቲንግ', labelEn: 'Football Betting' },
+      { key: 'dice', labelAm: 'የዳይስ ጨዋታ', labelEn: 'Dice Games' },
+      { key: 'coin', labelAm: 'የሳንቲም ውርርድ', labelEn: 'Coin Toss' },
+      { key: 'lucky', labelAm: 'የእድል ቁጥር (1-20)', labelEn: 'Lucky Number (1-20)' },
+    ];
+
+    return groups.map((grp) => {
+      const items = settledOutcomes.filter((o) => o.groupKey === grp.key);
+      const wins = items.filter((o) => o.won).length;
+      const losses = items.length - wins;
+      const total = items.length;
+      const winPct = total > 0 ? (wins / total) * 100 : 0;
+      const ratioStr = formatWinLossRatio(wins, losses);
+
+      return {
+        key: grp.key,
+        label: bi(grp.labelAm, grp.labelEn),
+        total,
+        wins,
+        losses,
+        winPct,
+        ratioStr,
+      };
+    });
+  }, [settledOutcomes, bi]);
 
   const stats = useMemo(() => {
     let totalWagered = 0;
@@ -136,6 +289,7 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({ bets, tickets = [] }
         label: grp.label,
         count: 0,
         wins: 0,
+        losses: 0,
         wagered: 0,
         wonAmount: 0,
         lostAmount: 0,
@@ -146,6 +300,7 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({ bets, tickets = [] }
         existing.wins += 1;
         existing.wonAmount += b.payout;
       } else {
+        existing.losses += 1;
         existing.lostAmount += b.betAmount;
       }
       map.set(grp.key, existing);
@@ -223,8 +378,313 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({ bets, tickets = [] }
   const winStrokeLen =
     stats.totalRounds > 0 ? (stats.winCount / stats.totalRounds) * donutCircumference : 0;
 
+  const ratioEdgeText =
+    winLossSummary.total === 0
+      ? bi('ገና ውጤት የለም', 'No settled games yet')
+      : winLossSummary.losses === 0 && winLossSummary.wins > 0
+      ? bi('100% ድል · ምንም ኪሳራ የለም', 'Undefeated · Zero losses')
+      : winLossSummary.wins > winLossSummary.losses
+      ? bi('የአሸናፊነት መጠንዎ ይበልጣል', 'Positive win edge')
+      : winLossSummary.wins === winLossSummary.losses
+      ? bi('አሸናፊ እና ተሸናፊ እኩል ናቸው', 'Even 1:1 split')
+      : bi('ተሸናፊነት በዝቷል — በጥንቃቄ ይጫወቱ', 'Below 1.00 — play cautiously');
+
   return (
     <div className="space-y-6">
+      {/* Player Win / Loss Ratio Section */}
+      <section
+        aria-labelledby="win-loss-ratio-heading"
+        className="bg-slate-900/95 border border-slate-800 rounded-3xl p-5 sm:p-8 space-y-6"
+      >
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 border-b border-slate-800 pb-4">
+          <div className="flex items-start sm:items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-slate-800 flex items-center justify-center text-amber-400 shrink-0">
+              <Scale className="w-5 h-5" />
+            </div>
+            <div>
+              <h2
+                id="win-loss-ratio-heading"
+                className="text-lg sm:text-xl font-extrabold text-white tracking-tight"
+              >
+                {bi(
+                  'የአሸናፊነት እና ተሸናፊነት መጠን (Win/Loss Ratio)',
+                  'Player Win / Loss Ratio',
+                )}
+              </h2>
+              <p className="text-xs text-slate-400">
+                {bi(
+                  'በጨዋታዎት ያሸነፉበት እና የተሸነፉበት ሬሾ፣ መቶኛ እና ተከታታይ ውጤት',
+                  'Your settled wins vs losses ratio, win percentage, and streak across games',
+                )}
+              </p>
+            </div>
+          </div>
+
+          {/* Interactive Game Category Filter */}
+          <div
+            role="tablist"
+            aria-label={bi('ጨዋታ ይምረጡ', 'Filter by game')}
+            className="flex items-center gap-1 p-1 bg-slate-950 rounded-xl border border-slate-800 overflow-x-auto"
+          >
+            {(
+              [
+                ['all', bi('ሁሉም', 'All')],
+                ['football', bi('እግር ኳስ', 'Football')],
+                ['dice', bi('ዳይስ', 'Dice')],
+                ['coin', bi('ሳንቲም', 'Coin')],
+                ['lucky', bi('እድል ቁጥር', 'Lucky')],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                role="tab"
+                aria-selected={ratioGameFilter === key}
+                onClick={() => setRatioGameFilter(key)}
+                className={`px-3 py-1.5 min-h-[34px] rounded-lg text-xs font-bold transition cursor-pointer whitespace-nowrap shrink-0 ${
+                  ratioGameFilter === key
+                    ? 'bg-amber-500 text-slate-950'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {winLossSummary.total === 0 ? (
+          <div className="border border-slate-800 rounded-2xl py-8 px-4 text-center space-y-2 bg-slate-950/50">
+            <p className="text-sm font-bold text-slate-200">
+              {bi(
+                'በዚህ ምድብ ውስጥ የተጠናቀቀ ጨዋታ ገና የለም',
+                'No settled rounds in this category yet',
+              )}
+            </p>
+            <p className="text-xs text-slate-400 max-w-md mx-auto">
+              {bi(
+                'ቢያንስ አንድ ጨዋታ ወይም የእግር ኳስ ትኬት ሲጠናቀቅ የአሸናፊነት እና ተሸናፊነት ሬሾዎ እዚህ በቀጥታ ይሰላል።',
+                'Complete at least one game round or settled football ticket to see your live Win/Loss ratio and breakdown.',
+              )}
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-6">
+            {/* Hairline-divided 4-Metric Win/Loss Ratio Summary Strip */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 border border-slate-800 rounded-2xl bg-slate-950/60 divide-y lg:divide-y-0 lg:divide-x divide-slate-800 overflow-hidden">
+              <div className="p-4 sm:p-5 space-y-1">
+                <span className="text-xs font-semibold text-slate-400">
+                  {bi('የድል / ኪሳራ ሬሾ (W/L Ratio)', 'Win / Loss Ratio')}
+                </span>
+                <div className="flex items-baseline gap-2.5">
+                  <span
+                    className={`font-mono-num tabular-nums text-2xl sm:text-3xl font-black ${
+                      winLossSummary.wins >= winLossSummary.losses
+                        ? 'text-emerald-400'
+                        : 'text-rose-400'
+                    }`}
+                  >
+                    {winLossSummary.ratioDisplay}
+                  </span>
+                  <span className="font-mono-num tabular-nums text-xs font-bold text-slate-400">
+                    ({winLossSummary.wins}W : {winLossSummary.losses}L)
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400">{ratioEdgeText}</p>
+              </div>
+
+              <div className="p-4 sm:p-5 space-y-1">
+                <span className="text-xs font-semibold text-slate-400">
+                  {bi('የአሸናፊነት መጠን (Win Rate)', 'Win Rate')}
+                </span>
+                <div className="flex items-baseline gap-2">
+                  <span className="font-mono-num tabular-nums text-2xl sm:text-3xl font-black text-emerald-400">
+                    {winLossSummary.winRateExact.toFixed(1)}%
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400 font-mono-num tabular-nums">
+                  {winLossSummary.wins} {bi('ድል ከ', 'wins of')} {winLossSummary.total}{' '}
+                  {bi('ጨዋታ', 'games')}
+                </p>
+              </div>
+
+              <div className="p-4 sm:p-5 space-y-1">
+                <span className="text-xs font-semibold text-slate-400">
+                  {bi('የተሸናፊነት መጠን (Loss Rate)', 'Loss Rate')}
+                </span>
+                <div className="flex items-baseline gap-2">
+                  <span className="font-mono-num tabular-nums text-2xl sm:text-3xl font-black text-rose-400">
+                    {winLossSummary.lossRateExact.toFixed(1)}%
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400 font-mono-num tabular-nums">
+                  {winLossSummary.losses} {bi('ኪሳራ ከ', 'losses of')} {winLossSummary.total}{' '}
+                  {bi('ጨዋታ', 'games')}
+                </p>
+              </div>
+
+              <div className="p-4 sm:p-5 space-y-1">
+                <span className="text-xs font-semibold text-slate-400">
+                  {bi('ተከታታይ ውጤት (Streak)', 'Streak')}
+                </span>
+                <div className="flex items-center gap-2">
+                  {winLossSummary.currentStreakType === 'win' ? (
+                    <Flame className="w-5 h-5 text-emerald-400 shrink-0" />
+                  ) : (
+                    <TrendingDown className="w-5 h-5 text-rose-400 shrink-0" />
+                  )}
+                  <span
+                    className={`font-mono-num tabular-nums text-2xl sm:text-3xl font-black ${
+                      winLossSummary.currentStreakType === 'win'
+                        ? 'text-emerald-400'
+                        : 'text-rose-400'
+                    }`}
+                  >
+                    {winLossSummary.currentStreakCount}
+                    {winLossSummary.currentStreakType === 'win' ? 'W' : 'L'}
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400 font-mono-num tabular-nums flex items-center gap-1">
+                  <Trophy className="w-3 h-3 text-amber-400 shrink-0" />
+                  <span>
+                    {bi('ምርጥ ተከታታይ ድል:', 'Best win streak:')} {winLossSummary.bestWinStreak}W
+                  </span>
+                </p>
+              </div>
+            </div>
+
+            {/* Proportional Win vs Loss Split Bar */}
+            <div className="space-y-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                <div className="flex items-center gap-2 font-bold text-emerald-400">
+                  <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                  <span className="font-mono-num tabular-nums">
+                    {bi('ያሸነፉት:', 'Wins:')} {winLossSummary.wins} (
+                    {winLossSummary.winRateExact.toFixed(1)}%)
+                  </span>
+                </div>
+                <span className="text-[11px] font-mono-num tabular-nums text-slate-400">
+                  50% {bi('መካከለኛ መስመር', 'Midpoint')}
+                </span>
+                <div className="flex items-center gap-2 font-bold text-rose-400">
+                  <span className="font-mono-num tabular-nums">
+                    {bi('የተሸነፉት:', 'Losses:')} {winLossSummary.losses} (
+                    {winLossSummary.lossRateExact.toFixed(1)}%)
+                  </span>
+                  <XCircle className="w-3.5 h-3.5 shrink-0" />
+                </div>
+              </div>
+
+              <div
+                role="img"
+                aria-label={bi(
+                  `አሸናፊ ${winLossSummary.winRateExact.toFixed(1)}%፣ ተሸናፊ ${winLossSummary.lossRateExact.toFixed(1)}%`,
+                  `Wins ${winLossSummary.winRateExact.toFixed(1)}%, Losses ${winLossSummary.lossRateExact.toFixed(1)}%`,
+                )}
+                className="relative h-3.5 w-full rounded-full overflow-hidden bg-rose-500/80 border border-slate-800 flex"
+              >
+                <div
+                  className="h-full bg-emerald-500 transition-all duration-500"
+                  style={{ width: `${winLossSummary.winRateExact}%` }}
+                />
+                <span
+                  aria-hidden="true"
+                  className="absolute left-1/2 top-0 bottom-0 w-0.5 bg-slate-950/90"
+                />
+              </div>
+            </div>
+
+            {/* Per-Game Win/Loss Ratio Breakdown Table */}
+            <div className="border border-slate-800 rounded-2xl overflow-hidden bg-slate-950/40">
+              <div className="px-4 py-3 border-b border-slate-800 flex items-center justify-between gap-2">
+                <h3 className="text-xs sm:text-sm font-extrabold text-white">
+                  {bi('የአሸናፊነት / ተሸናፊነት መጠን በየጨዋታው', 'Win / Loss Ratio by Game')}
+                </h3>
+                <span className="text-[11px] text-slate-400 font-mono-num tabular-nums">
+                  {settledOutcomes.length} {bi('ጠቅላላ የተጠናቀቁ', 'total settled')}
+                </span>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="text-[11px] font-bold text-slate-400 border-b border-slate-800">
+                      <th className="py-2.5 px-4">{bi('የጨዋታ አይነት', 'Game')}</th>
+                      <th className="py-2.5 px-3 text-right">{bi('ጠቅላላ', 'Played')}</th>
+                      <th className="py-2.5 px-3 text-right">{bi('ድል', 'Wins')}</th>
+                      <th className="py-2.5 px-3 text-right">{bi('ኪሳራ', 'Losses')}</th>
+                      <th className="py-2.5 px-3 text-right">{bi('W/L ሬሾ', 'W/L Ratio')}</th>
+                      <th className="py-2.5 px-4 text-right min-w-[140px]">
+                        {bi('የድል መጠን %', 'Win %')}
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/70 text-xs">
+                    {perGameRatioRows.map((row) => {
+                      const isSelected = ratioGameFilter === row.key;
+                      return (
+                        <tr
+                          key={row.key}
+                          onClick={() =>
+                            setRatioGameFilter(isSelected ? 'all' : row.key)
+                          }
+                          className={`cursor-pointer transition ${
+                            isSelected
+                              ? 'bg-amber-500/10'
+                              : 'hover:bg-slate-800/40'
+                          }`}
+                        >
+                          <td className="py-3 px-4 font-bold text-slate-200 whitespace-nowrap">
+                            {row.label}
+                          </td>
+                          <td className="py-3 px-3 text-right font-mono-num tabular-nums text-slate-300">
+                            {row.total}
+                          </td>
+                          <td className="py-3 px-3 text-right font-mono-num tabular-nums font-bold text-emerald-400">
+                            {row.wins}
+                          </td>
+                          <td className="py-3 px-3 text-right font-mono-num tabular-nums font-bold text-rose-400">
+                            {row.losses}
+                          </td>
+                          <td
+                            className={`py-3 px-3 text-right font-mono-num tabular-nums font-extrabold ${
+                              row.total === 0
+                                ? 'text-slate-500'
+                                : row.wins >= row.losses
+                                ? 'text-emerald-400'
+                                : 'text-rose-400'
+                            }`}
+                          >
+                            {row.ratioStr}
+                          </td>
+                          <td className="py-3 px-4">
+                            <div className="flex items-center justify-end gap-2.5">
+                              <div className="w-20 h-2 rounded-full bg-slate-800 overflow-hidden shrink-0">
+                                {row.total > 0 && (
+                                  <div
+                                    className={`h-full rounded-full ${
+                                      row.winPct >= 50 ? 'bg-emerald-500' : 'bg-rose-500'
+                                    }`}
+                                    style={{ width: `${row.winPct}%` }}
+                                  />
+                                )}
+                              </div>
+                              <span className="font-mono-num tabular-nums font-bold text-slate-200 w-11 text-right">
+                                {row.total > 0 ? `${row.winPct.toFixed(0)}%` : '—'}
+                              </span>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+      </section>
+
       {/* Football Tickets & Live Progress Section */}
       <section className="bg-slate-900/95 border border-slate-800 rounded-3xl p-5 sm:p-8 space-y-5">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4">
