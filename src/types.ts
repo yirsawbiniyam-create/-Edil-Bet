@@ -443,3 +443,23 @@ export interface ReceivedSmsTransaction {
   used_at?: Timestamp;
 }
 
+export interface ReferralCodeRecord {
+  code: string;
+  ownerUid: string;
+  ownerMask: string;
+  createdAt: Timestamp;
+}
+
+export interface ReferralRecord {
+  id: string;
+  referrerUid: string;
+  referredUid: string;
+  referralCode: string;
+  referredMask: string;
+  status: 'pending' | 'completed';
+  rewardStatus: 'unclaimed' | 'eligible' | 'paid';
+  rewardAmount: number;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+

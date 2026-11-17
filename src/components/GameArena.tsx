@@ -27,6 +27,7 @@ import {
   getDiceGameLabel,
 } from '../lib/gameEngine';
 import { recordGameBet } from '../lib/firestoreService';
+import { useLanguage } from '../lib/i18n';
 import { playGameSound } from '../lib/sound';
 import {
   BetRecord,
@@ -70,6 +71,7 @@ export const GameArena: React.FC<GameArenaProps> = ({
   onNotify,
   onWinCelebrate,
 }) => {
+  const { bi } = useLanguage();
   const arenaRef = useRef<HTMLDivElement | null>(null);
   const [activeGame, setActiveGame] = useState<Exclude<GameCategory, 'chicken'>>(
     initialGame ?? 'dice',
@@ -149,6 +151,7 @@ export const GameArena: React.FC<GameArenaProps> = ({
 
   const numericBet = Math.max(0, parseFloat(betInput) || 0);
   const potentialWin = Number((numericBet * currentMultiplier).toFixed(2));
+  const potentialNetProfit = Math.max(0, Number((potentialWin - numericBet).toFixed(2)));
   const d100Stats = getD100Stats(d100Direction, d100Target);
 
   const handleSwitchGame = (game: Exclude<GameCategory, 'chicken'>) => {
@@ -953,26 +956,64 @@ export const GameArena: React.FC<GameArenaProps> = ({
             </button>
           </div>
 
-          <div className="grid grid-cols-6 gap-1.5">
-            {[10, 25, 50, 100, 250, 500].map((preset) => (
-              <button
-                key={preset}
-                type="button"
-                disabled={isRolling}
-                onClick={() => {
-                  if (isRolling) return;
-                  playGameSound('click', soundEnabled);
-                  setBetInput(String(preset));
-                }}
-                className={`min-h-[38px] py-1.5 rounded-lg text-xs font-mono-num font-black transition cursor-pointer active:scale-[0.96] ${
-                  numericBet === preset
-                    ? 'bg-amber-500 text-slate-950'
-                    : 'bg-slate-800 hover:bg-slate-700 text-slate-200'
-                }`}
-              >
-                {preset}
-              </button>
-            ))}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between text-[11px] text-slate-400">
+              <span className="font-semibold">
+                {bi('ፈጣን የመደብ ምርጫ', 'Quick Select Stake')}
+              </span>
+              <span className="font-mono-num">
+                {bi('1 ንክኪ = ፈጣን መሙላት', '1-tap fill')}
+              </span>
+            </div>
+            <div
+              role="group"
+              aria-label={bi('ፈጣን የመደብ መጠኖች', 'Quick select stake amounts')}
+              className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 sm:gap-2"
+            >
+              {[10, 50, 100, 250, 500, 1000].map((preset) => {
+                const isSelected = numericBet === preset;
+                return (
+                  <button
+                    key={preset}
+                    type="button"
+                    disabled={isRolling}
+                    aria-pressed={isSelected}
+                    onClick={() => {
+                      if (isRolling) return;
+                      playGameSound('click', soundEnabled);
+                      setBetInput(String(preset));
+                    }}
+                    className={`min-h-[44px] py-2 px-2 rounded-xl border text-xs font-mono-num tabular-nums font-black transition cursor-pointer active:scale-[0.96] disabled:opacity-50 ${
+                      isSelected
+                        ? 'bg-amber-500 border-amber-400 text-slate-950 shadow-sm'
+                        : 'bg-slate-800/90 border-slate-700 hover:bg-slate-700 hover:border-slate-500 text-slate-100'
+                    }`}
+                  >
+                    {preset.toLocaleString()} {bi('ብር', 'ETB')}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Live Potential Win & Net Profit Strip */}
+          <div className="grid grid-cols-2 gap-2 bg-slate-950/85 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs">
+            <div>
+              <span className="text-[11px] text-slate-400 block">
+                ሊያሸንፉ የሚችሉት · Potential Win
+              </span>
+              <span className="font-mono-num tabular-nums text-sm sm:text-base font-black text-emerald-400">
+                {formatETB(potentialWin)}
+              </span>
+            </div>
+            <div className="text-right">
+              <span className="text-[11px] text-slate-400 block">
+                የተጣራ ትርፍ · Net Profit ({currentMultiplier}x)
+              </span>
+              <span className="font-mono-num tabular-nums text-sm sm:text-base font-extrabold text-amber-300">
+                +{formatETB(potentialNetProfit)}
+              </span>
+            </div>
           </div>
 
           <button

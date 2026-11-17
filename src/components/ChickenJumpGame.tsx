@@ -1,15 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  AlertTriangle,
   Banknote,
   CheckCircle2,
   Coins,
   Footprints,
   Play,
   RotateCcw,
-  ShieldAlert,
   Sparkles,
-  Trophy,
+  Video,
+  VideoOff,
   Volume2,
   VolumeX,
   Wallet,
@@ -17,12 +16,13 @@ import {
 } from 'lucide-react';
 import {
   CHICKEN_DIFFICULTY_SPECS,
-  ChickenHazardKind,
   ChickenRoundPlan,
   DEFAULT_GAME_CONFIG,
   formatETB,
   generateChickenRoundPlan,
 } from '../lib/gameEngine';
+import { ChickenAsphaltStage } from './ChickenAsphaltStage';
+import { ChickenVideoBackdrop } from './ChickenVideoBackdrop';
 import { recordGameBet } from '../lib/firestoreService';
 import { useLanguage } from '../lib/i18n';
 import { playGameSound } from '../lib/sound';
@@ -43,106 +43,7 @@ interface ChickenJumpGameProps {
 
 type ChickenPhase = 'READY' | 'JUMPING' | 'STEP_SAFE' | 'CRASHED' | 'FINISHED';
 
-const QUICK_STAKES = [10, 25, 50, 100, 250, 500];
-
-const ChickenMascotSVG: React.FC<{ jumping: boolean; crashed: boolean }> = ({
-  jumping,
-  crashed,
-}) => (
-  <svg
-    viewBox="0 0 64 64"
-    className={`w-10 h-10 sm:w-13 sm:h-13 drop-shadow-[0_5px_8px_rgba(0,0,0,0.45)] transition-transform duration-200 ${
-      jumping
-        ? '-translate-y-3 scale-110 -rotate-6'
-        : crashed
-          ? 'rotate-90 opacity-85 scale-90'
-          : 'translate-y-0'
-    }`}
-    aria-hidden="true"
-  >
-    <path
-      d="M26 48 L24 57 M24 57 L20 58 M24 57 L28 58"
-      stroke="#F59E0B"
-      strokeWidth="3"
-      strokeLinecap="round"
-    />
-    <path
-      d="M38 48 L40 57 M40 57 L36 58 M40 57 L44 58"
-      stroke="#F59E0B"
-      strokeWidth="3"
-      strokeLinecap="round"
-    />
-    <path
-      d="M15 34 C9 29, 8 22, 14 23 C12 18, 18 17, 21 24 Z"
-      fill="#F59E0B"
-      stroke="#92400E"
-      strokeWidth="1.5"
-    />
-    <ellipse cx="31" cy="36" rx="15" ry="13" fill="#FFFBEB" stroke="#D97706" strokeWidth="2" />
-    <path
-      d={jumping ? 'M22 33 C17 24, 29 22, 33 32 Z' : 'M23 35 C20 42, 33 43, 35 35 Z'}
-      fill="#FDE68A"
-      stroke="#D97706"
-      strokeWidth="1.6"
-    />
-    <path
-      d="M33 14 C33 9, 38 9, 39 13 C41 9, 46 10, 45 15 C47 14, 49 17, 45 20 L34 20 Z"
-      fill="#EF4444"
-      stroke="#991B1B"
-      strokeWidth="1.3"
-    />
-    <circle cx="39" cy="24" r="9.5" fill="#FFFBEB" stroke="#D97706" strokeWidth="2" />
-    <polygon points="47,22 56,25 47,28" fill="#F59E0B" stroke="#B45309" strokeWidth="1.3" />
-    <ellipse cx="45" cy="30" rx="2.3" ry="3.2" fill="#EF4444" />
-    {crashed ? (
-      <path d="M40 21 L44 25 M44 21 L40 25" stroke="#1E293B" strokeWidth="2" strokeLinecap="round" />
-    ) : (
-      <>
-        <circle cx="42" cy="22.5" r="2.2" fill="#0F172A" />
-        <circle cx="42.7" cy="21.8" r="0.7" fill="#FFFFFF" />
-      </>
-    )}
-  </svg>
-);
-
-const HazardIcon: React.FC<{ kind: ChickenHazardKind; crashedHere: boolean }> = ({
-  kind,
-  crashedHere,
-}) => {
-  if (kind === 'truck') {
-    return (
-      <div
-        className={`flex flex-col items-center justify-center ${
-          crashedHere ? 'scale-110' : 'opacity-85'
-        }`}
-      >
-        <div className="w-9 h-6 sm:w-11 sm:h-7 rounded-md bg-rose-600 border-2 border-rose-300 flex items-center justify-between px-1 shadow-md">
-          <span className="w-1.5 h-1.5 rounded-full bg-amber-300" />
-          <span className="text-[8px] sm:text-[9px] font-black text-white tracking-tighter">
-            STOP
-          </span>
-          <span className="w-1.5 h-2.5 rounded-xs bg-sky-200" />
-        </div>
-        <div className="flex items-center justify-between w-7 sm:w-9 -mt-0.5">
-          <span className="w-2 h-2 rounded-full bg-slate-950 border border-slate-400" />
-          <span className="w-2 h-2 rounded-full bg-slate-950 border border-slate-400" />
-        </div>
-      </div>
-    );
-  }
-  if (kind === 'cart') {
-    return (
-      <div className="w-8 h-7 sm:w-10 sm:h-8 rounded-lg bg-amber-600 border-2 border-amber-300 flex items-center justify-center shadow-md">
-        <ShieldAlert className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
-      </div>
-    );
-  }
-  return (
-    <div className="w-8 h-7 sm:w-10 sm:h-8 rounded-lg bg-rose-700 border-2 border-amber-400 flex items-center justify-center shadow-md">
-      <AlertTriangle className="w-4 h-4 sm:w-5 sm:h-5 text-amber-300" />
-    </div>
-  );
-};
+const QUICK_STAKES = [10, 50, 100, 250, 500, 1000];
 
 export const ChickenJumpGame: React.FC<ChickenJumpGameProps> = ({
   uid,
@@ -165,10 +66,12 @@ export const ChickenJumpGame: React.FC<ChickenJumpGameProps> = ({
   );
   const [phase, setPhase] = useState<ChickenPhase>('READY');
   const [currentStep, setCurrentStep] = useState<number>(0);
+  const [targetStep, setTargetStep] = useState<number>(0);
   const [roundPlan, setRoundPlan] = useState<ChickenRoundPlan | null>(null);
   const [activeStake, setActiveStake] = useState<number>(50);
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [crashedLane, setCrashedLane] = useState<number | null>(null);
+  const [videoFxEnabled, setVideoFxEnabled] = useState<boolean>(true);
   const [roundResult, setRoundResult] = useState<{
     won: boolean;
     title: string;
@@ -215,16 +118,17 @@ export const ChickenJumpGame: React.FC<ChickenJumpGameProps> = ({
   const nextMultiplier = hasNextLane ? multipliers[nextStep - 1] : currentMultiplier;
   const cashoutPayout = Number((lockedBet * currentMultiplier).toFixed(2));
   const nextPotentialPayout = Number((lockedBet * nextMultiplier).toFixed(2));
+  const firstLaneMult = multipliers[0] ?? 1.15;
+  const maxLaneMult = multipliers[multipliers.length - 1] ?? 1;
+  const firstLanePayout = Number((numericBet * firstLaneMult).toFixed(2));
+  const maxPotentialPayout = Number((numericBet * maxLaneMult).toFixed(2));
+  const netMaxProfit = Math.max(0, Number((maxPotentialPayout - numericBet).toFixed(2)));
 
   const isInActiveRun = phase === 'JUMPING' || phase === 'STEP_SAFE';
-  const showHazards = phase === 'CRASHED' || phase === 'FINISHED';
-
-  const laneGridColsClass =
-    multipliers.length >= 10
-      ? 'grid-cols-5'
-      : multipliers.length >= 8
-        ? 'grid-cols-4'
-        : 'grid-cols-3';
+  const defaultHazards = useMemo(
+    () => multipliers.map((_, idx) => (['taxi', 'truck', 'cart'][idx % 3] === 'taxi' ? 'cone' : idx % 2 === 0 ? 'truck' : 'cart') as 'truck' | 'cone' | 'cart'),
+    [multipliers],
+  );
 
   const progressPercent = Math.round((currentStep / multipliers.length) * 100);
 
@@ -286,19 +190,20 @@ export const ChickenJumpGame: React.FC<ChickenJumpGameProps> = ({
   };
 
   const executeHopToStep = (
-    targetStep: number,
+    hopTarget: number,
     plan: ChickenRoundPlan,
     stake: number,
   ) => {
+    setTargetStep(hopTarget);
     setPhase('JUMPING');
     playGameSound('roll', soundEnabled);
 
     hopTimeoutRef.current = window.setTimeout(() => {
-      setCurrentStep(targetStep);
+      setCurrentStep(hopTarget);
 
-      if (targetStep <= plan.maxSafeStep) {
-        const landedMult = plan.multipliers[targetStep - 1];
-        if (targetStep === plan.multipliers.length) {
+      if (hopTarget <= plan.maxSafeStep) {
+        const landedMult = plan.multipliers[hopTarget - 1];
+        if (hopTarget === plan.multipliers.length) {
           const fullPayout = Number((stake * landedMult).toFixed(2));
           setPhase('FINISHED');
           void commitChickenBetToFirestore({
@@ -306,27 +211,27 @@ export const ChickenJumpGame: React.FC<ChickenJumpGameProps> = ({
             won: true,
             multiplier: landedMult,
             payout: fullPayout,
-            choiceText: `${CHICKEN_DIFFICULTY_SPECS[plan.difficulty].labelAm} · ሙሉ መስመር (${targetStep}/${plan.multipliers.length})`,
-            resultText: `ሁሉንም ${targetStep} መስመሮች በድል አለፈ! (${landedMult}x)`,
+            choiceText: `${CHICKEN_DIFFICULTY_SPECS[plan.difficulty].labelAm} · ሙሉ መስመር (${hopTarget}/${plan.multipliers.length})`,
+            resultText: `ሁሉንም ${hopTarget} መስመሮች በድል አለፈ! (${landedMult}x)`,
           });
         } else {
           playGameSound('click', soundEnabled);
           setPhase('STEP_SAFE');
         }
       } else {
-        setCrashedLane(targetStep);
+        setCrashedLane(hopTarget);
         setPhase('CRASHED');
-        const safeReached = Math.max(0, targetStep - 1);
+        const safeReached = Math.max(0, hopTarget - 1);
         void commitChickenBetToFirestore({
           stake,
           won: false,
           multiplier: 1,
           payout: 0,
-          choiceText: `${CHICKEN_DIFFICULTY_SPECS[plan.difficulty].labelAm} · መስመር ${targetStep}`,
-          resultText: `በመስመር ${targetStep} ላይ እንቅፋት ገጠመው (${safeReached} መስመር አልፎ ነበር)`,
+          choiceText: `${CHICKEN_DIFFICULTY_SPECS[plan.difficulty].labelAm} · መስመር ${hopTarget}`,
+          resultText: `በመስመር ${hopTarget} ላይ መኪና ገጭቶታል (${safeReached} መስመር አልፎ ነበር)`,
         });
       }
-    }, 220);
+    }, 340);
   };
 
   const handleStartRound = () => {
@@ -356,6 +261,7 @@ export const ChickenJumpGame: React.FC<ChickenJumpGameProps> = ({
     setRoundPlan(plan);
     setActiveStake(numericBet);
     setCurrentStep(0);
+    setTargetStep(1);
     setCrashedLane(null);
     setRoundResult(null);
 
@@ -399,6 +305,7 @@ export const ChickenJumpGame: React.FC<ChickenJumpGameProps> = ({
     playGameSound('click', soundEnabled);
     setPhase('READY');
     setCurrentStep(0);
+    setTargetStep(0);
     setRoundPlan(null);
     setCrashedLane(null);
     setRoundResult(null);
@@ -436,10 +343,12 @@ export const ChickenJumpGame: React.FC<ChickenJumpGameProps> = ({
         </div>
       )}
 
-      {/* Mobile-Fit Pro Chicken Jump Cockpit */}
-      <section className="bg-slate-900 border border-slate-800 rounded-2xl sm:rounded-3xl p-3 sm:p-6 space-y-3 sm:space-y-4 text-white shadow-xl">
+      {/* Mobile-Fit Pro Chicken Jump Cockpit with Dynamic Video Highway Backdrop */}
+      <section className="relative overflow-hidden bg-slate-900 border border-slate-800 rounded-2xl sm:rounded-3xl p-3 sm:p-6 space-y-3 sm:space-y-4 text-white shadow-xl">
+        <ChickenVideoBackdrop phase={phase} enabled={videoFxEnabled} />
+
         {/* Compact Game Cockpit HUD */}
-        <div className="flex items-center justify-between gap-2 border-b border-slate-800 pb-2.5 sm:pb-3">
+        <div className="relative z-10 flex items-center justify-between gap-2 border-b border-slate-800/90 pb-2.5 sm:pb-3">
           <div className="flex items-center gap-2 min-w-0">
             <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-amber-500/15 border border-amber-500/35 flex items-center justify-center shrink-0">
               <Footprints className="w-5 h-5 text-amber-400" />
@@ -448,14 +357,14 @@ export const ChickenJumpGame: React.FC<ChickenJumpGameProps> = ({
               <h2 className="text-sm sm:text-xl font-black tracking-tight text-white truncate">
                 {bi('ዶሮ ዝላይ ውርርድ', 'Chicken Jump')}
               </h2>
-              <p className="text-[11px] text-slate-400 font-mono-num truncate">
+              <p className="text-[11px] text-slate-300 font-mono-num truncate">
                 {bi('ቀሪ:', 'Bal:')} <strong className="text-emerald-400">{formatETB(wallet.balance)}</strong>
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
-            <div className="bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1 text-right">
+            <div className="bg-slate-950/90 border border-slate-800 rounded-xl px-2.5 py-1 text-right">
               <span className="text-[10px] text-slate-400 block leading-tight">
                 {bi('መባዣ', 'Mult')}
               </span>
@@ -466,9 +375,23 @@ export const ChickenJumpGame: React.FC<ChickenJumpGameProps> = ({
 
             <button
               type="button"
+              onClick={() => setVideoFxEnabled((prev) => !prev)}
+              title={videoFxEnabled ? bi('የቪዲዮ ካሜራ አጥፋ', 'Hide Video FX') : bi('የቪዲዮ ካሜራ አብራ', 'Show Video FX')}
+              aria-label={videoFxEnabled ? bi('የቪዲዮ ካሜራ አጥፋ', 'Disable video effects') : bi('የቪዲዮ ካሜራ አብራ', 'Enable video effects')}
+              className="w-10 h-10 rounded-xl bg-slate-800/90 hover:bg-slate-700 border border-slate-700 flex items-center justify-center text-slate-200 transition cursor-pointer shrink-0"
+            >
+              {videoFxEnabled ? (
+                <Video className="w-4 h-4 text-emerald-400" />
+              ) : (
+                <VideoOff className="w-4 h-4 text-slate-500" />
+              )}
+            </button>
+
+            <button
+              type="button"
               onClick={onToggleSound}
               title={soundEnabled ? bi('ድምጽ አጥፋ', 'Mute') : bi('ድምጽ አብራ', 'Unmute')}
-              className="w-10 h-10 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 flex items-center justify-center text-slate-200 transition cursor-pointer shrink-0"
+              className="w-10 h-10 rounded-xl bg-slate-800/90 hover:bg-slate-700 border border-slate-700 flex items-center justify-center text-slate-200 transition cursor-pointer shrink-0"
             >
               {soundEnabled ? (
                 <Volume2 className="w-4 h-4 text-amber-400" />
@@ -480,7 +403,7 @@ export const ChickenJumpGame: React.FC<ChickenJumpGameProps> = ({
         </div>
 
         {/* Difficulty Selector (Single Compact Row) */}
-        <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
+        <div className="relative z-10 grid grid-cols-3 gap-1.5 sm:gap-2">
           {(['easy', 'medium', 'hard'] as ChickenDifficulty[]).map((diffKey) => {
             const item = CHICKEN_DIFFICULTY_SPECS[diffKey];
             const active = difficulty === diffKey;
@@ -496,6 +419,7 @@ export const ChickenJumpGame: React.FC<ChickenJumpGameProps> = ({
                   setDifficulty(diffKey);
                   setRoundPlan(null);
                   setCurrentStep(0);
+                  setTargetStep(0);
                   setPhase('READY');
                   setCrashedLane(null);
                   setRoundResult(null);
@@ -521,17 +445,17 @@ export const ChickenJumpGame: React.FC<ChickenJumpGameProps> = ({
           })}
         </div>
 
-        {/* Full-Screen-Fit Interactive Road Board (All Lanes Visible Without Sideways Cut-off) */}
-        <div className="rounded-2xl bg-[#0F2419] border-2 border-emerald-500/25 p-2.5 sm:p-4 space-y-2.5">
+        {/* Video-Style Live Animated Asphalt Road Stage */}
+        <div className="relative z-10 rounded-2xl bg-[#11161d]/95 border-2 border-slate-700/80 p-2.5 sm:p-4 space-y-2.5">
           {/* Live Status & Progress Bar */}
           <div className="flex items-center justify-between gap-2 text-[11px] sm:text-xs">
             <span className="font-bold text-emerald-300 flex items-center gap-1.5 min-w-0 truncate">
               <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
               <span className="truncate">
                 {phase === 'READY' &&
-                  bi('መጠን መርጠው "ጀምርና ዝለል" ይጫኑ', 'Pick stake & tap Start Jump')}
+                  bi('መጠን መርጠው "ጀምርና ዝለል" ይጫኑ — ዶሮዋ በአስፋልቱ ላይ ትዘላለች', 'Pick stake & tap Start Jump to cross the asphalt highway')}
                 {phase === 'JUMPING' &&
-                  bi('ዶሮዋ እየዘለለች ነው...', 'Chicken is jumping...')}
+                  bi('ዶሮዋ በአስፋልቱ ላይ እየዘለለች ነው...', 'Chicken is jumping across the asphalt...')}
                 {phase === 'STEP_SAFE' &&
                   bi(
                     `መስመር ${currentStep} ሰላም! ${formatETB(cashoutPayout)} ማውጣት ይችላሉ`,
@@ -539,11 +463,11 @@ export const ChickenJumpGame: React.FC<ChickenJumpGameProps> = ({
                   )}
                 {phase === 'CRASHED' &&
                   bi(
-                    `በመስመር #${crashedLane ?? ''} ላይ መኪና ገጠመው`,
-                    `Hit traffic on Lane #${crashedLane ?? ''}`,
+                    `በመስመር #${crashedLane ?? ''} ላይ መኪና ገጭቶታል`,
+                    `Hit by oncoming traffic on Lane #${crashedLane ?? ''}`,
                   )}
                 {phase === 'FINISHED' &&
-                  bi('በድል ተጠናቋል!', 'Round completed!')}
+                  bi('ሁሉንም አስፋልት መስመር በድል አልፋለች!', 'Crossed the entire asphalt road safely!')}
               </span>
             </span>
 
@@ -561,16 +485,29 @@ export const ChickenJumpGame: React.FC<ChickenJumpGameProps> = ({
             />
           </div>
 
-          {/* Responsive Full-Board Road Grid */}
-          <div className={`grid ${laneGridColsClass} gap-1.5 sm:gap-2.5`}>
+          <ChickenAsphaltStage
+            multipliers={multipliers}
+            lockedBet={lockedBet}
+            currentStep={currentStep}
+            targetStep={targetStep}
+            phase={phase}
+            crashedLane={crashedLane}
+            maxSafeStep={roundPlan ? roundPlan.maxSafeStep : null}
+            laneHazards={roundPlan ? roundPlan.laneHazards : defaultHazards}
+            currencyLabel={bi('ብር', 'ETB')}
+            showVideoOverlay={videoFxEnabled}
+            actionCamLabel={bi('የዝላይ ካሜራ', 'Jump Cam')}
+            onTapNextLane={handleJumpNext}
+          />
+
+          {/* Compact Scannable Asphalt Lane Multiplier Strip */}
+          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-0.5">
             {multipliers.map((mult, idx) => {
               const stepNum = idx + 1;
               const isChickenHere = currentStep === stepNum;
               const isCleared = currentStep > stepNum || (isChickenHere && phase !== 'CRASHED');
               const isNextTarget = phase === 'STEP_SAFE' && stepNum === currentStep + 1;
               const isCrashSpot = crashedLane === stepNum;
-              const isSafeLaneInPlan = roundPlan ? stepNum <= roundPlan.maxSafeStep : true;
-              const hazardKind = roundPlan?.laneHazards[idx] ?? 'truck';
 
               return (
                 <button
@@ -578,75 +515,24 @@ export const ChickenJumpGame: React.FC<ChickenJumpGameProps> = ({
                   type="button"
                   disabled={!isNextTarget || isSaving}
                   onClick={() => {
-                    if (isNextTarget) {
-                      handleJumpNext();
-                    }
+                    if (isNextTarget) handleJumpNext();
                   }}
-                  className={`min-h-[78px] sm:min-h-[106px] rounded-xl sm:rounded-2xl border-2 flex flex-col items-center justify-between p-1.5 sm:p-2.5 relative transition active:scale-[0.97] ${
+                  className={`shrink-0 min-w-[54px] px-2 py-1.5 rounded-lg border text-center transition ${
                     isCrashSpot
-                      ? 'border-rose-500 bg-rose-950/85'
-                      : isChickenHere
-                        ? 'border-amber-400 bg-slate-800 shadow-[0_0_16px_rgba(245,158,11,0.28)]'
-                        : isNextTarget
-                          ? 'border-emerald-400 bg-emerald-950/60 hover:bg-emerald-900/60 cursor-pointer'
-                          : isCleared
-                            ? 'border-emerald-500/45 bg-emerald-950/35'
-                            : 'border-slate-700/80 bg-[#18222F]'
+                      ? 'bg-rose-950/80 border-rose-500 text-rose-300'
+                      : isNextTarget
+                        ? 'bg-amber-500/20 border-amber-400 text-amber-300 cursor-pointer'
+                        : isCleared
+                          ? 'bg-emerald-500/15 border-emerald-500/50 text-emerald-300'
+                          : 'bg-slate-950/70 border-slate-800 text-slate-400'
                   }`}
                 >
-                  {/* Lane # & Status Icon */}
-                  <div className="w-full flex items-center justify-between text-[10px] font-mono-num font-bold leading-none">
-                    <span className="text-slate-400">#{stepNum}</span>
-                    {isCleared && !isCrashSpot && (
-                      <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                    )}
-                    {isCrashSpot && <XCircle className="w-3 h-3 text-rose-400" />}
-                    {stepNum === multipliers.length && !isCrashSpot && !isCleared && (
-                      <Trophy className="w-3 h-3 text-amber-400" />
-                    )}
+                  <div className="text-[9px] font-mono-num opacity-80 leading-none">
+                    #{stepNum}
                   </div>
-
-                  {/* Center Chicken / Hazard / Multiplier Coin */}
-                  <div className="flex-1 w-full flex items-center justify-center relative my-0.5">
-                    <span
-                      aria-hidden="true"
-                      className="absolute inset-x-1 top-1/2 -translate-y-1/2 border-t border-dashed border-slate-600/50"
-                    />
-                    <div className="relative z-10 flex items-center justify-center">
-                      {isChickenHere ? (
-                        <ChickenMascotSVG jumping={phase === 'JUMPING'} crashed={isCrashSpot} />
-                      ) : showHazards && !isSafeLaneInPlan ? (
-                        <HazardIcon kind={hazardKind} crashedHere={isCrashSpot} />
-                      ) : (
-                        <div
-                          className={`w-9 h-9 sm:w-11 sm:h-11 rounded-full border-2 flex items-center justify-center ${
-                            isCleared
-                              ? 'bg-emerald-500/20 border-emerald-400 text-emerald-300'
-                              : isNextTarget
-                                ? 'bg-amber-500/25 border-amber-400 text-amber-200'
-                                : 'bg-slate-900/90 border-slate-600 text-amber-300'
-                          }`}
-                        >
-                          <span className="font-mono-num tabular-nums text-[10px] sm:text-xs font-black">
-                            {mult}x
-                          </span>
-                        </div>
-                      )}
-                    </div>
+                  <div className="text-[11px] font-mono-num font-black leading-tight mt-0.5">
+                    {mult}x
                   </div>
-
-                  {/* Bottom ETB Payout */}
-                  <span
-                    className={`font-mono-num tabular-nums text-[10px] sm:text-[11px] font-bold leading-none ${
-                      isCrashSpot
-                        ? 'text-rose-300'
-                        : isCleared
-                          ? 'text-emerald-300'
-                          : 'text-slate-300'
-                    }`}
-                  >
-                    {Math.round(lockedBet * mult).toLocaleString()} {bi('ብር', 'ETB')}
-                  </span>
                 </button>
               );
             })}
@@ -656,7 +542,7 @@ export const ChickenJumpGame: React.FC<ChickenJumpGameProps> = ({
         {/* Compact Outcome Toast Banner */}
         {roundResult && (
           <div
-            className={`px-3.5 py-2.5 rounded-xl border flex items-center justify-center gap-2.5 text-center ${
+            className={`relative z-10 px-3.5 py-2.5 rounded-xl border flex items-center justify-center gap-2.5 text-center ${
               roundResult.won
                 ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-200'
                 : 'bg-rose-500/15 border-rose-500/40 text-rose-200'
@@ -675,9 +561,20 @@ export const ChickenJumpGame: React.FC<ChickenJumpGameProps> = ({
         )}
 
         {/* Thumb-Zone Controls */}
-        <div className="pt-2.5 border-t border-slate-800 space-y-2.5">
+        <div className="relative z-10 pt-2.5 border-t border-slate-800/90 space-y-2.5">
           {!isInActiveRun ? (
             <>
+              {/* Stake Header + Live Potential Win Preview */}
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                <label htmlFor="chickenStakeInput" className="font-bold text-slate-300">
+                  {bi(`መደብ (ዝቅተኛ: ${minBet} ብር)`, `Stake (Min: ${minBet} ETB)`)}
+                </label>
+                <span className="font-mono-num tabular-nums font-extrabold text-emerald-400">
+                  {bi('ሊያሸንፉ:', 'Potential Win:')}{' '}
+                  {formatETB(firstLanePayout)} – {formatETB(maxPotentialPayout)}
+                </span>
+              </div>
+
               {/* Stake Input + ½ / 2x + Presets */}
               <div className="flex items-center gap-2">
                 <div className="relative flex-1 min-w-0">
@@ -726,25 +623,66 @@ export const ChickenJumpGame: React.FC<ChickenJumpGameProps> = ({
                 </button>
               </div>
 
-              <div className="grid grid-cols-6 gap-1.5">
-                {QUICK_STAKES.map((preset) => (
-                  <button
-                    key={preset}
-                    type="button"
-                    disabled={isSaving}
-                    onClick={() => {
-                      playGameSound('click', soundEnabled);
-                      setBetInput(String(preset));
-                    }}
-                    className={`min-h-[38px] py-1.5 rounded-lg text-xs font-mono-num font-black transition cursor-pointer active:scale-[0.96] ${
-                      numericBet === preset
-                        ? 'bg-amber-500 text-slate-950'
-                        : 'bg-slate-800 hover:bg-slate-700 text-slate-200'
-                    }`}
-                  >
-                    {preset}
-                  </button>
-                ))}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between text-[11px] text-slate-400">
+                  <span className="font-semibold">
+                    {bi('ፈጣን የመደብ ምርጫ', 'Quick Select Stake')}
+                  </span>
+                  <span className="font-mono-num">
+                    {bi('1 ንክኪ = ፈጣን መሙላት', '1-tap fill')}
+                  </span>
+                </div>
+                <div
+                  role="group"
+                  aria-label={bi('ፈጣን የመደብ መጠኖች', 'Quick select stake amounts')}
+                  className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 sm:gap-2"
+                >
+                  {QUICK_STAKES.map((preset) => {
+                    const isSelected = numericBet === preset;
+                    return (
+                      <button
+                        key={preset}
+                        type="button"
+                        disabled={isSaving}
+                        aria-pressed={isSelected}
+                        onClick={() => {
+                          playGameSound('click', soundEnabled);
+                          setBetInput(String(preset));
+                        }}
+                        className={`min-h-[44px] py-2 px-2 rounded-xl border text-xs font-mono-num tabular-nums font-black transition cursor-pointer active:scale-[0.96] disabled:opacity-50 ${
+                          isSelected
+                            ? 'bg-amber-500 border-amber-400 text-slate-950 shadow-sm'
+                            : 'bg-slate-800/90 border-slate-700 hover:bg-slate-700 hover:border-slate-500 text-slate-100'
+                        }`}
+                      >
+                        {preset.toLocaleString()} {bi('ብር', 'ETB')}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Dynamic Potential Win Breakdown */}
+              <div className="grid grid-cols-2 gap-2 bg-slate-950/85 border border-slate-800 rounded-xl px-3 py-2 text-xs">
+                <div>
+                  <span className="text-[11px] text-slate-400 block">
+                    {bi(`መስመር #1 (${firstLaneMult}x)`, `Lane #1 (${firstLaneMult}x)`)}
+                  </span>
+                  <span className="font-mono-num tabular-nums font-extrabold text-slate-100">
+                    {formatETB(firstLanePayout)}
+                  </span>
+                </div>
+                <div className="text-right">
+                  <span className="text-[11px] text-slate-400 block">
+                    {bi(`ከፍተኛ ሽልማት (${maxLaneMult}x)`, `Max Win (${maxLaneMult}x)`)}
+                  </span>
+                  <span className="font-mono-num tabular-nums font-black text-emerald-400">
+                    {formatETB(maxPotentialPayout)}{' '}
+                    <span className="text-[10px] font-bold text-emerald-300/90">
+                      (+{formatETB(netMaxProfit)})
+                    </span>
+                  </span>
+                </div>
               </div>
 
               <div className="flex gap-2">
@@ -822,7 +760,7 @@ export const ChickenJumpGame: React.FC<ChickenJumpGameProps> = ({
           )}
         </div>
 
-        <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1">
+        <div className="relative z-10 flex items-center justify-between text-[11px] text-slate-300 pt-1">
           <span className="flex items-center gap-1.5">
             <Coins className="w-3.5 h-3.5 text-amber-400 shrink-0" />
             <span>{bi('ቀጥታ ቀጣዩን መስመር መንካትም ይቻላል', 'Tap the glowing next lane or button')}</span>

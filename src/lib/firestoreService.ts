@@ -31,6 +31,7 @@ import {
   FootballTicket,
   FootballTicketPick,
   GameConfig,
+  ReferralCodeRecord,
   TelebirrSettings,
   UserWallet,
   WeeklyLeaderboardEntry,
@@ -153,6 +154,7 @@ export async function registerPlayerWithPhone(params: {
   rawPhone: string;
   password: string;
   playerName?: string;
+  referralCode?: string;
 }): Promise<User> {
   const phone = normalizePhone(params.rawPhone);
   const password = params.password;
@@ -171,6 +173,15 @@ export async function registerPlayerWithPhone(params: {
     const displayName = cleanName || phone;
     await updateProfile(cred.user, { displayName });
     await ensureUserWalletAndAdmin(cred.user, phone, displayName, phone);
+    try {
+      await recordReferralAttribution({
+        user: cred.user,
+        referralCode: params.referralCode,
+        playerLabel: displayName,
+      });
+    } catch {
+      // Never block registration if referral attribution cannot be saved
+    }
     return cred.user;
   } catch (error) {
     const code = (error as { code?: string })?.code || '';
@@ -2451,5 +2462,198 @@ export async function settleOrCashoutFootballTicket(params: {
   }
 
   return { status: finalStatus, payout: finalPayout, resultText };
+}
+
+// --- Refer a Friend Helpers ---
+export const REFERRAL_CODE_REGEX = /^[A-Z0-9]{6,20}$/;
+export const PENDING_REFERRAL_STORAGE_KEY = 'edilbet_pending_ref';
+const pendingReferralAttributions = new Set<string>();
+
+export function normalizeReferralCode(raw: string): string {
+  return raw
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '')
+    .slice(0, 20);
+}
+
+export function savePendingReferralCode(raw: string): string | null {
+  const clean = normalizeReferralCode(raw);
+  if (!REFERRAL_CODE_REGEX.test(clean)) return null;
+  try {
+    localStorage.setItem(PENDING_REFERRAL_STORAGE_KEY, clean);
+  } catch {
+    // ignore storage errors
+  }
+  return clean;
+}
+
+export function readPendingReferralCode(): string | null {
+  try {
+    const stored = localStorage.getItem(PENDING_REFERRAL_STORAGE_KEY) || '';
+    const clean = normalizeReferralCode(stored);
+    return REFERRAL_CODE_REGEX.test(clean) ? clean : null;
+  } catch {
+    return null;
+  }
+}
+
+export function clearPendingReferralCode(): void {
+  try {
+    localStorage.removeItem(PENDING_REFERRAL_STORAGE_KEY);
+  } catch {
+    // ignore storage errors
+  }
+}
+
+export function deriveReferralCode(seedUid: string, attempt = 0): string {
+  const input = attempt > 0 ? `${seedUid}#${attempt}` : seedUid;
+  let h1 = 2166136261;
+  let h2 = 3735928559;
+  for (let i = 0; i < input.length; i += 1) {
+    const ch = input.charCodeAt(i);
+    h1 ^= ch;
+    h1 = Math.imul(h1, 16777619);
+    h2 ^= ch + ((i + 1) * 31);
+    h2 = Math.imul(h2, 2246822519);
+  }
+  const part1 = (h1 >>> 0).toString(36).toUpperCase().padStart(4, '0').slice(-4);
+  const part2 = (h2 >>> 0).toString(36).toUpperCase().padStart(4, '0').slice(-4);
+  return `EDIL${part1}${part2}`.slice(0, 12);
+}
+
+export function buildReferralLink(code: string): string {
+  const clean = normalizeReferralCode(code);
+  if (typeof window === 'undefined' || !clean) return '';
+  return `${window.location.origin}/?ref=${encodeURIComponent(clean)}`;
+}
+
+export async function ensureUserReferralCode(params: {
+  user: User;
+  wallet?: UserWallet | null;
+  displayName?: string;
+}): Promise<string> {
+  const canonicalUid = params.wallet?.primaryUid || params.user.uid;
+  const rawLabel =
+    params.displayName ||
+    params.wallet?.displayName ||
+    extractPhoneFromAuthEmail(params.user.email) ||
+    params.user.displayName ||
+    'ተጫዋች';
+  const ownerMask = maskPlayerDisplay(rawLabel).slice(0, 32);
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const candidate = deriveReferralCode(canonicalUid, attempt);
+    const codeRef = doc(db, 'referralCodes', candidate);
+    try {
+      const snap = await getDoc(codeRef);
+      if (snap.exists()) {
+        const existingData = snap.data() as ReferralCodeRecord;
+        if (
+          existingData.ownerUid === params.user.uid ||
+          (params.wallet?.primaryUid && existingData.ownerUid === params.wallet.primaryUid)
+        ) {
+          return existingData.code;
+        }
+        continue;
+      }
+
+      await setDoc(codeRef, {
+        code: candidate,
+        ownerUid: params.user.uid,
+        ownerMask,
+        createdAt: serverTimestamp(),
+      });
+      return candidate;
+    } catch (error) {
+      const code = (error as { code?: string })?.code || '';
+      if (code === 'permission-denied') {
+        handleFirestoreError(error, OperationType.WRITE, `referralCodes/${candidate}`);
+      }
+    }
+  }
+
+  return deriveReferralCode(params.user.uid, 0);
+}
+
+export async function recordReferralAttribution(params: {
+  user: User;
+  referralCode?: string | null;
+  playerLabel?: string;
+}): Promise<boolean> {
+  const candidate = normalizeReferralCode(
+    params.referralCode || readPendingReferralCode() || '',
+  );
+  if (!REFERRAL_CODE_REGEX.test(candidate)) {
+    return false;
+  }
+
+  const isAdminEmail =
+    params.user.email?.toLowerCase() === ADMIN_AUTH_EMAIL.toLowerCase();
+  if (isAdminEmail || isRecoveryAuthEmail(params.user.email)) {
+    clearPendingReferralCode();
+    return false;
+  }
+
+  if (pendingReferralAttributions.has(params.user.uid)) {
+    return false;
+  }
+  pendingReferralAttributions.add(params.user.uid);
+
+  try {
+    const refDocRef = doc(db, 'referrals', params.user.uid);
+    const existingSnap = await getDoc(refDocRef);
+    if (existingSnap.exists()) {
+      clearPendingReferralCode();
+      return false;
+    }
+
+    const codeSnap = await getDoc(doc(db, 'referralCodes', candidate));
+    if (!codeSnap.exists()) {
+      return false;
+    }
+    const codeData = codeSnap.data() as ReferralCodeRecord;
+
+    if (!codeData.ownerUid || codeData.ownerUid === params.user.uid) {
+      clearPendingReferralCode();
+      return false;
+    }
+
+    const userSnap = await getDoc(doc(db, 'users', params.user.uid));
+    if (!userSnap.exists()) {
+      return false;
+    }
+
+    const rawLabel =
+      params.playerLabel ||
+      params.user.displayName ||
+      extractPhoneFromAuthEmail(params.user.email) ||
+      'ተጫዋች';
+    const referredMask = maskPlayerDisplay(rawLabel).slice(0, 32);
+
+    await setDoc(refDocRef, {
+      id: params.user.uid,
+      referrerUid: codeData.ownerUid,
+      referredUid: params.user.uid,
+      referralCode: candidate,
+      referredMask,
+      status: 'completed',
+      rewardStatus: 'unclaimed',
+      rewardAmount: 0,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+
+    clearPendingReferralCode();
+    return true;
+  } catch (error) {
+    const errCode = (error as { code?: string })?.code || '';
+    if (errCode === 'permission-denied') {
+      handleFirestoreError(error, OperationType.WRITE, `referrals/${params.user.uid}`);
+    }
+    return false;
+  } finally {
+    pendingReferralAttributions.delete(params.user.uid);
+  }
 }
 

@@ -29,10 +29,12 @@ import {
 import {
   DepositRecord,
   ReceivedSmsTransaction,
+  ReferralRecord,
   TelebirrSettings,
   UserWallet,
   WithdrawalRecord,
 } from '../types';
+import { ReferFriendCard } from './ReferFriendCard';
 
 interface WalletPanelProps {
   user: User;
@@ -41,6 +43,8 @@ interface WalletPanelProps {
   registeredPhone: string | null;
   deposits: DepositRecord[];
   withdrawals: WithdrawalRecord[];
+  referralCode: string | null;
+  referrals: ReferralRecord[];
   onNotify: (msg: string, type: 'success' | 'error' | 'info') => void;
 }
 
@@ -51,6 +55,8 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
   registeredPhone,
   deposits,
   withdrawals,
+  referralCode,
+  referrals,
   onNotify,
 }) => {
   const [subTab, setSubTab] = useState<'deposit' | 'withdraw'>('deposit');
@@ -1214,6 +1220,14 @@ export const WalletPanel: React.FC<WalletPanelProps> = ({
           )}
         </section>
       </div>
+
+      {/* Refer a Friend Section */}
+      <ReferFriendCard
+        referralCode={referralCode}
+        referrals={referrals}
+        variant="dark"
+        onNotify={onNotify}
+      />
     </div>
   );
 };

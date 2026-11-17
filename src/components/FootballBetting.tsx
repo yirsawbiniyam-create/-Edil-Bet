@@ -1222,6 +1222,7 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
 
   const numericStake = Math.max(0, parseFloat(stakeInput) || 0);
   const potentialPayout = Number((numericStake * totalOdds).toFixed(2));
+  const potentialNetProfit = Math.max(0, Number((potentialPayout - numericStake).toFixed(2)));
 
   const togglePick = (match: ScheduledMatch, market: FootballMarketKey) => {
     if (placingTicket) return;
@@ -1891,12 +1892,14 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
           </div>
 
           <div>
-            <div className="flex items-center justify-between mb-1">
+            <div className="flex items-center justify-between gap-2 mb-1">
               <label htmlFor="footballStake" className="text-xs font-bold text-slate-700">
                 {bi('የመወራረጃ መጠን (ETB)', 'Stake Amount (ETB)')}
               </label>
-              <span className="text-[11px] font-mono-num text-slate-500">
-                {minBet.toLocaleString()} ETB – {bi('ያለ ገደብ', 'Unlimited')}
+              <span className="text-[11px] font-mono-num tabular-nums font-extrabold text-[#0E8A38]">
+                {picks.length > 0
+                  ? `${bi('ሊያሸንፉ:', 'Win:')} ${formatETB(potentialPayout)}`
+                  : `${minBet.toLocaleString()} ETB – ${bi('ያለ ገደብ', 'Unlimited')}`}
               </span>
             </div>
             <div className="relative">
@@ -1904,7 +1907,7 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
                 id="footballStake"
                 type="number"
                 min={minBet}
-                step={1}
+                step="any"
                 value={stakeInput}
                 disabled={placingTicket}
                 onChange={(e) => setStakeInput(e.target.value)}
@@ -1926,7 +1929,11 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
                   playGameSound('click', soundEnabled);
                   setStakeInput(String(preset));
                 }}
-                className="py-1.5 rounded bg-[#E5E7EB] hover:bg-slate-300 text-xs font-mono-num font-bold text-slate-900 cursor-pointer"
+                className={`py-1.5 rounded text-xs font-mono-num font-bold cursor-pointer transition ${
+                  numericStake === preset
+                    ? 'bg-[#0E8A38] text-white'
+                    : 'bg-[#E5E7EB] hover:bg-slate-300 text-slate-900'
+                }`}
               >
                 {preset}
               </button>
@@ -1944,13 +1951,25 @@ export const FootballBetting: React.FC<FootballBettingProps> = ({
             </button>
           </div>
 
-          <div className="flex items-center justify-between text-xs bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5">
-            <span className="text-slate-600 font-bold">
-              {bi('ሊያሸንፉ የሚችሉት (FT)', 'Potential Win (FT)')}
-            </span>
-            <span className="font-mono-num text-sm font-black text-[#0E8A38]">
-              {formatETB(potentialPayout)}
-            </span>
+          <div className="bg-emerald-50/75 border border-emerald-200 rounded-lg px-3 py-2.5 space-y-1">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-slate-700 font-bold">
+                {bi('ሊያሸንፉ የሚችሉት (Potential Win)', 'Potential Win (Total Payout)')}
+              </span>
+              <span className="font-mono-num tabular-nums text-sm font-black text-[#0E8A38]">
+                {formatETB(potentialPayout)}
+              </span>
+            </div>
+            <div className="flex items-center justify-between text-[11px]">
+              <span className="text-slate-500 font-semibold">
+                {picks.length > 0
+                  ? bi('የተጣራ ትርፍ (Net Profit)', 'Est. Net Profit')
+                  : bi('ለማስላት ጨዋታ ይምረጡ', 'Select match picks to calculate payout')}
+              </span>
+              <span className="font-mono-num tabular-nums font-bold text-slate-800">
+                {picks.length > 0 ? `+${formatETB(potentialNetProfit)}` : '—'}
+              </span>
+            </div>
           </div>
 
           <button

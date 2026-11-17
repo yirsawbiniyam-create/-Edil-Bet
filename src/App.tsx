@@ -70,14 +70,19 @@ import {
   completeRecoveredPasswordSetup,
   DAILY_BONUS_AMOUNT,
   DEFAULT_TELEBIRR_PHONE,
+  ensureUserReferralCode,
   ensureUserWalletAndAdmin,
   extractPhoneFromAuthEmail,
   getCurrentWeekKey,
   getDailyBonusClaimId,
   loginPlayerWithIdentifier,
+  normalizeReferralCode,
   PHONE_REGEX,
+  readPendingReferralCode,
   recoverPlayerAccountByPhone,
+  REFERRAL_CODE_REGEX,
   registerPlayerWithPhone,
+  savePendingReferralCode,
   updateAccountPassword,
   updateAccountUsername,
 } from './lib/firestoreService';
@@ -94,6 +99,8 @@ import {
   GameConfig,
   LedgerEntry,
   RecentWinnerRecord,
+  ReferralCodeRecord,
+  ReferralRecord,
   TelebirrSettings,
   UserPrivateInfo,
   UserWallet,
@@ -120,7 +127,15 @@ export default function App() {
   const [soundEnabled, setSoundEnabled] = useState(true);
 
   // Player / Admin Login & Registration State
-  const [authMode, setAuthMode] = useState<AuthMode>('login');
+  const [authMode, setAuthMode] = useState<AuthMode>(() => {
+    if (typeof window !== 'undefined') {
+      const urlRef = new URLSearchParams(window.location.search).get('ref');
+      if (urlRef && REFERRAL_CODE_REGEX.test(normalizeReferralCode(urlRef))) {
+        return 'register';
+      }
+    }
+    return 'login';
+  });
   const [phoneInput, setPhoneInput] = useState<string>(() => {
     try {
       return localStorage.getItem(LAST_PHONE_STORAGE_KEY) || '';
@@ -131,6 +146,16 @@ export default function App() {
   const [passwordInput, setPasswordInput] = useState('');
   const [confirmPasswordInput, setConfirmPasswordInput] = useState('');
   const [playerNameInput, setPlayerNameInput] = useState('');
+  const [referralCodeInput, setReferralCodeInput] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      const urlRef = new URLSearchParams(window.location.search).get('ref');
+      if (urlRef) {
+        const saved = savePendingReferralCode(urlRef);
+        if (saved) return saved;
+      }
+    }
+    return readPendingReferralCode() || '';
+  });
   const [showPassword, setShowPassword] = useState(false);
   const [authSubmitting, setAuthSubmitting] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -178,6 +203,8 @@ export default function App() {
   const [footballPopularity, setFootballPopularity] = useState<FootballPopularityRecord[]>([]);
   const [recentWinners, setRecentWinners] = useState<RecentWinnerRecord[]>([]);
   const [weeklyLeaderboard, setWeeklyLeaderboard] = useState<WeeklyLeaderboardEntry[]>([]);
+  const [myReferralCode, setMyReferralCode] = useState<string | null>(null);
+  const [myReferrals, setMyReferrals] = useState<ReferralRecord[]>([]);
   const [dailyBonusLoaded, setDailyBonusLoaded] = useState(false);
   const [dailyBonusClaimed, setDailyBonusClaimed] = useState(true);
   const [claimingBonus, setClaimingBonus] = useState(false);
@@ -257,6 +284,8 @@ export default function App() {
         setFootballPopularity([]);
         setRecentWinners([]);
         setWeeklyLeaderboard([]);
+        setMyReferralCode(null);
+        setMyReferrals([]);
         setAllWithdrawals([]);
         setAllDeposits([]);
         setLedger([]);
@@ -519,6 +548,83 @@ export default function App() {
       (error) => handleFirestoreError(error, OperationType.LIST, 'weeklyLeaderboard'),
     );
 
+    const referralCodeBuckets = {
+      current: [] as ReferralCodeRecord[],
+      primary: [] as ReferralCodeRecord[],
+    };
+    const syncReferralCode = () => {
+      const chosen = referralCodeBuckets.primary[0] || referralCodeBuckets.current[0];
+      if (chosen?.code) {
+        setMyReferralCode(chosen.code);
+      }
+    };
+
+    const unsubReferralCodesCurrent = onSnapshot(
+      query(collection(db, 'referralCodes'), where('ownerUid', '==', user.uid), limit(3)),
+      (snap) => {
+        referralCodeBuckets.current = snap.docs.map((d) => d.data() as ReferralCodeRecord);
+        syncReferralCode();
+      },
+      (error) => handleFirestoreError(error, OperationType.LIST, 'referralCodes'),
+    );
+
+    const unsubReferralCodesPrimary =
+      wallet?.primaryUid && wallet.primaryUid !== user.uid
+        ? onSnapshot(
+            query(
+              collection(db, 'referralCodes'),
+              where('ownerUid', '==', wallet.primaryUid),
+              limit(3),
+            ),
+            (snap) => {
+              referralCodeBuckets.primary = snap.docs.map(
+                (d) => d.data() as ReferralCodeRecord,
+              );
+              syncReferralCode();
+            },
+            (error) => handleFirestoreError(error, OperationType.LIST, 'referralCodes'),
+          )
+        : null;
+
+    const referralBuckets = {
+      current: [] as ReferralRecord[],
+      primary: [] as ReferralRecord[],
+    };
+    const syncMergedReferrals = () => {
+      const byId = new Map<string, ReferralRecord>();
+      for (const item of [...referralBuckets.current, ...referralBuckets.primary]) {
+        byId.set(item.id, item);
+      }
+      const merged = Array.from(byId.values());
+      merged.sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
+      setMyReferrals(merged.slice(0, 100));
+    };
+
+    const unsubReferralsCurrent = onSnapshot(
+      query(collection(db, 'referrals'), where('referrerUid', '==', user.uid), limit(100)),
+      (snap) => {
+        referralBuckets.current = snap.docs.map((d) => d.data() as ReferralRecord);
+        syncMergedReferrals();
+      },
+      (error) => handleFirestoreError(error, OperationType.LIST, 'referrals'),
+    );
+
+    const unsubReferralsPrimary =
+      wallet?.primaryUid && wallet.primaryUid !== user.uid
+        ? onSnapshot(
+            query(
+              collection(db, 'referrals'),
+              where('referrerUid', '==', wallet.primaryUid),
+              limit(100),
+            ),
+            (snap) => {
+              referralBuckets.primary = snap.docs.map((d) => d.data() as ReferralRecord);
+              syncMergedReferrals();
+            },
+            (error) => handleFirestoreError(error, OperationType.LIST, 'referrals'),
+          )
+        : null;
+
     return () => {
       unsubSettings();
       unsubGameConfig();
@@ -538,8 +644,30 @@ export default function App() {
       unsubFootballPopularity();
       unsubWinners();
       unsubWeeklyLeaderboard();
+      unsubReferralCodesCurrent();
+      unsubReferralCodesPrimary?.();
+      unsubReferralsCurrent();
+      unsubReferralsPrimary?.();
     };
   }, [authReady, user, wallet?.primaryUid]);
+
+  // Ensure every signed-in user has an active unique referral code stored in Firestore
+  useEffect(() => {
+    if (!authReady || !user || !wallet) return;
+    let cancelled = false;
+    ensureUserReferralCode({ user, wallet })
+      .then((code) => {
+        if (!cancelled && code) {
+          setMyReferralCode((prev) => prev || code);
+        }
+      })
+      .catch((err) => {
+        console.error('ensureUserReferralCode error:', err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [authReady, user, wallet?.uid, wallet?.primaryUid]);
 
   // Admin-only Firestore Listeners
   useEffect(() => {
@@ -638,6 +766,7 @@ export default function App() {
           rawPhone: phoneInput,
           password: passwordInput,
           playerName: playerNameInput,
+          referralCode: referralCodeInput,
         });
         notify(
           bi(
@@ -1639,24 +1768,52 @@ export default function App() {
                 </div>
 
                 {authMode === 'register' && (
-                  <div>
-                    <label htmlFor="authConfirmPassword" className="block text-xs font-bold text-slate-700 mb-1">
-                      {bi('ፓስዎርድ በድጋሚ ያረጋግጡ', 'Confirm Password')}
-                    </label>
-                    <div className="relative">
-                      <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                      <input
-                        id="authConfirmPassword"
-                        type={showPassword ? 'text' : 'password'}
-                        required
-                        minLength={6}
-                        value={confirmPasswordInput}
-                        onChange={(e) => setConfirmPasswordInput(e.target.value)}
-                        placeholder="••••••"
-                        className="w-full bg-slate-50 border border-slate-300 focus:border-[#0E8A38] rounded-lg pl-9 pr-3 py-2.5 text-sm text-slate-900 outline-none"
-                      />
+                  <>
+                    <div>
+                      <label htmlFor="authConfirmPassword" className="block text-xs font-bold text-slate-700 mb-1">
+                        {bi('ፓስዎርድ በድጋሚ ያረጋግጡ', 'Confirm Password')}
+                      </label>
+                      <div className="relative">
+                        <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <input
+                          id="authConfirmPassword"
+                          type={showPassword ? 'text' : 'password'}
+                          required
+                          minLength={6}
+                          value={confirmPasswordInput}
+                          onChange={(e) => setConfirmPasswordInput(e.target.value)}
+                          placeholder="••••••"
+                          className="w-full bg-slate-50 border border-slate-300 focus:border-[#0E8A38] rounded-lg pl-9 pr-3 py-2.5 text-sm text-slate-900 outline-none"
+                        />
+                      </div>
                     </div>
-                  </div>
+
+                    <div>
+                      <label htmlFor="authReferralCode" className="block text-xs font-bold text-slate-700 mb-1">
+                        {bi('የግብዣ ኮድ (አማራጭ)', 'Referral Code (Optional)')}
+                      </label>
+                      <div className="relative">
+                        <Gift className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <input
+                          id="authReferralCode"
+                          type="text"
+                          maxLength={20}
+                          value={referralCodeInput}
+                          onChange={(e) => setReferralCodeInput(normalizeReferralCode(e.target.value))}
+                          placeholder={bi('ለምሳሌ: EDIL1234ABCD', 'e.g. EDIL1234ABCD')}
+                          className="w-full bg-slate-50 border border-slate-300 focus:border-[#0E8A38] rounded-lg pl-9 pr-3 py-2.5 text-sm font-mono-num uppercase text-slate-900 outline-none"
+                        />
+                      </div>
+                      {REFERRAL_CODE_REGEX.test(referralCodeInput) && (
+                        <p className="text-[11px] font-bold text-[#0E8A38] mt-1">
+                          {bi(
+                            `የጓደኛ ግብዣ ኮድ (${referralCodeInput}) ተያይዟል።`,
+                            `Friend referral code (${referralCodeInput}) attached.`,
+                          )}
+                        </p>
+                      )}
+                    </div>
+                  </>
                 )}
 
                 <button
@@ -1776,6 +1933,9 @@ export default function App() {
                 }}
                 onGoToWallet={() => openTab('wallet')}
                 onGoToHistory={() => openTab('history')}
+                referralCode={myReferralCode}
+                referrals={myReferrals}
+                onNotify={notify}
               />
             )}
 
@@ -1891,6 +2051,8 @@ export default function App() {
                   }
                   deposits={myDeposits}
                   withdrawals={myWithdrawals}
+                  referralCode={myReferralCode}
+                  referrals={myReferrals}
                   onNotify={notify}
                 />
               </div>

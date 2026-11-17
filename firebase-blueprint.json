@@ -879,6 +879,98 @@
         }
       },
       "required": ["transaction_id", "amount", "message", "status", "created_at"]
+    },
+    "ReferralCode": {
+      "title": "ReferralCode",
+      "description": "Unique shareable referral code mapping to its owner UID without exposing PII.",
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^[A-Z0-9]{6,20}$",
+          "minLength": 6,
+          "maxLength": 20
+        },
+        "ownerUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "ownerMask": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 32
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["code", "ownerUid", "ownerMask", "createdAt"]
+    },
+    "Referral": {
+      "title": "Referral",
+      "description": "Tracks a successful referral registration keyed by referredUid for future reward payout logic.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "referrerUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "referredUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "referralCode": {
+          "type": "string",
+          "pattern": "^[A-Z0-9]{6,20}$",
+          "minLength": 6,
+          "maxLength": 20
+        },
+        "referredMask": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 32
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "completed"]
+        },
+        "rewardStatus": {
+          "type": "string",
+          "enum": ["unclaimed", "eligible", "paid"]
+        },
+        "rewardAmount": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "referrerUid",
+        "referredUid",
+        "referralCode",
+        "referredMask",
+        "status",
+        "rewardStatus",
+        "rewardAmount",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -961,6 +1053,14 @@
     "/received_sms_transactions/{txId}": {
       "schema": { "$ref": "#/entities/ReceivedSmsTransaction" },
       "description": "Incoming Telebirr SMS gateway records consumed atomically during WalletPanel deposit verification."
+    },
+    "/referralCodes/{code}": {
+      "schema": { "$ref": "#/entities/ReferralCode" },
+      "description": "Unique referral code lookup index mapping codes to referrer UIDs without PII."
+    },
+    "/referrals/{referralId}": {
+      "schema": { "$ref": "#/entities/Referral" },
+      "description": "Successful referral attribution records keyed by referredUid for future reward tracking."
     }
   }
 }

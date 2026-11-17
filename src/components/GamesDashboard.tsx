@@ -19,7 +19,8 @@ import luckyNumberPromoImg from '../assets/images/lucky_number_promo_17949280077
 import stadiumBannerImg from '../assets/images/sportsbook_stadium_banner_1794733915064.jpg';
 import { DEFAULT_GAME_CONFIG, formatETB } from '../lib/gameEngine';
 import { useLanguage } from '../lib/i18n';
-import { GameCategory, GameConfig, UserWallet } from '../types';
+import { GameCategory, GameConfig, ReferralRecord, UserWallet } from '../types';
+import { ReferFriendCard } from './ReferFriendCard';
 
 interface GamesDashboardProps {
   wallet: UserWallet;
@@ -37,6 +38,9 @@ interface GamesDashboardProps {
   onOpenArenaGame: (category: Exclude<GameCategory, 'chicken'>, stake: number) => void;
   onGoToWallet: () => void;
   onGoToHistory: () => void;
+  referralCode: string | null;
+  referrals: ReferralRecord[];
+  onNotify: (msg: string, type: 'success' | 'error' | 'info') => void;
 }
 
 const STAKE_PRESETS = [10, 25, 50, 100, 250, 500];
@@ -57,6 +61,9 @@ export const GamesDashboard: React.FC<GamesDashboardProps> = ({
   onOpenArenaGame,
   onGoToWallet,
   onGoToHistory,
+  referralCode,
+  referrals,
+  onNotify,
 }) => {
   const { bi } = useLanguage();
   const activeConfig = gameConfig ?? DEFAULT_GAME_CONFIG;
@@ -432,6 +439,14 @@ export const GamesDashboard: React.FC<GamesDashboardProps> = ({
           </div>
         </div>
       </section>
+
+      {/* Refer a Friend Card */}
+      <ReferFriendCard
+        referralCode={referralCode}
+        referrals={referrals}
+        variant="light"
+        onNotify={onNotify}
+      />
     </div>
   );
 };

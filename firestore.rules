@@ -423,6 +423,43 @@ service cloud.firestore {
         );
     }
 
+    function isValidReferralCodeId(code) {
+      return code is string && code.size() >= 6 && code.size() <= 20 && code.matches('^[A-Z0-9]+$');
+    }
+
+    function isValidReferralCode(data, code) {
+      return data.keys().hasAll(['code', 'ownerUid', 'ownerMask', 'createdAt'])
+        && data.keys().hasOnly(['code', 'ownerUid', 'ownerMask', 'createdAt'])
+        && isValidReferralCodeId(data.code) && data.code == code
+        && isValidId(data.ownerUid) && data.ownerUid == request.auth.uid
+        && data.ownerMask is string && data.ownerMask.size() >= 2 && data.ownerMask.size() <= 32
+        && data.createdAt == request.time;
+    }
+
+    function isValidReferral(data, referralId) {
+      return data.keys().hasAll([
+          'id', 'referrerUid', 'referredUid', 'referralCode',
+          'referredMask', 'status', 'rewardStatus', 'rewardAmount',
+          'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'referrerUid', 'referredUid', 'referralCode',
+          'referredMask', 'status', 'rewardStatus', 'rewardAmount',
+          'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id) && data.id == referralId
+        && isValidId(data.referrerUid)
+        && isValidId(data.referredUid)
+        && data.referrerUid != data.referredUid
+        && isValidReferralCodeId(data.referralCode)
+        && data.referredMask is string && data.referredMask.size() >= 2 && data.referredMask.size() <= 32
+        && data.status in ['pending', 'completed']
+        && data.rewardStatus in ['unclaimed', 'eligible', 'paid']
+        && data.rewardAmount is number && data.rewardAmount >= 0 && data.rewardAmount <= 100000
+        && data.createdAt is timestamp
+        && data.updatedAt == request.time;
+    }
+
     // --- Collection Rules ---
 
     // 1. System Telebirr Settings & Public Branding
@@ -1138,6 +1175,65 @@ service cloud.firestore {
         && incoming().diff(existing()).affectedKeys().hasOnly(['playerMask', 'totalWinnings', 'winsCount', 'biggestWin', 'lastGameName', 'updatedAt'])
         && isLeaderboardWinDeltaValid(incoming().totalWinnings - existing().totalWinnings);
 
+      allow delete: if false;
+    }
+
+    // 14. Unique Shareable Referral Codes (Zero PII)
+    match /referralCodes/{code} {
+      allow get: if isValidReferralCodeId(code);
+      allow list: if isAdmin() || (isVerifiedUser() && (
+        resource.data.ownerUid == request.auth.uid ||
+        isRecoveredSessionFor(resource.data.ownerUid)
+      ));
+      allow create: if isValidReferralCodeId(code)
+        && isVerifiedUser()
+        && isValidReferralCode(incoming(), code);
+      allow update, delete: if false;
+    }
+
+    // 15. Successful Referral Tracking Records (Keyed by referredUid to prevent duplicates & self-referrals)
+    match /referrals/{referralId} {
+      allow get: if isValidId(referralId) && (
+        isAdmin() ||
+        (isVerifiedUser() && (
+          referralId == request.auth.uid ||
+          (resource != null && (
+            resource.data.referrerUid == request.auth.uid ||
+            resource.data.referredUid == request.auth.uid ||
+            isRecoveredSessionFor(resource.data.referrerUid)
+          ))
+        ))
+      );
+      allow list: if isAdmin() || (
+        isVerifiedUser() && (
+          resource.data.referrerUid == request.auth.uid ||
+          resource.data.referredUid == request.auth.uid ||
+          isRecoveredSessionFor(resource.data.referrerUid)
+        )
+      );
+      allow create: if isValidId(referralId)
+        && isVerifiedUser()
+        && isValidReferral(incoming(), referralId)
+        && referralId == request.auth.uid
+        && incoming().referredUid == request.auth.uid
+        && !(request.auth.token.email is string && request.auth.token.email.matches('^0[79][0-9]{8}\\.r[0-9]+\\..*$'))
+        && incoming().status == 'completed'
+        && incoming().rewardStatus == 'unclaimed'
+        && incoming().rewardAmount == 0
+        && incoming().createdAt == request.time
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && exists(/databases/$(database)/documents/referralCodes/$(incoming().referralCode))
+        && get(/databases/$(database)/documents/referralCodes/$(incoming().referralCode)).data.ownerUid == incoming().referrerUid;
+      allow update: if isValidId(referralId)
+        && isAdmin()
+        && isValidReferral(incoming(), referralId)
+        && incoming().id == existing().id
+        && incoming().referrerUid == existing().referrerUid
+        && incoming().referredUid == existing().referredUid
+        && incoming().referralCode == existing().referralCode
+        && incoming().referredMask == existing().referredMask
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'rewardStatus', 'rewardAmount', 'updatedAt']);
       allow delete: if false;
     }
   }
